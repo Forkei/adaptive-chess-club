@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Metropolis Chess Club{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="min-h-screen bg-neutral-950 text-neutral-100">
+  <header class="border-b border-neutral-800 bg-neutral-900/60 backdrop-blur">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="/" class="text-xl font-semibold tracking-wide">
+        <span class="mr-2">♟</span>Metropolis Chess Club
+      </a>
+      <nav class="text-sm text-neutral-300 space-x-4">
+        <a href="/" class="hover:text-white">Characters</a>
+        <a href="/characters/new" class="rounded bg-emerald-500 px-3 py-1.5 font-medium text-neutral-900 hover:bg-emerald-400">
+          + New character
+        </a>
+      </nav>
+    </div>
+  </header>
+  <main class="max-w-6xl mx-auto px-6 py-8">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="max-w-6xl mx-auto px-6 py-8 text-center text-xs text-neutral-500">
+    Phase 1 — characters &amp; memories only. Gameplay arrives in Phase 2.
+  </footer>
+</body>
+</html>

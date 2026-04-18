@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}New character — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-semibold mb-1">New character</h1>
+<p class="text-sm text-neutral-400 mb-6">
+  We'll generate their memories from the backstory in the background. Takes ~30–60s.
+</p>
+
+<form method="post" action="/characters/new" class="space-y-6 max-w-3xl">
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="md:col-span-2">
+      <label class="block text-sm mb-1">Name</label>
+      <input required name="name" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Avatar emoji</label>
+      <input name="avatar_emoji" maxlength="4" value="♟" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+    </div>
+  </div>
+
+  <div>
+    <label class="block text-sm mb-1">Short description</label>
+    <input name="short_description" maxlength="280" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+    <p class="text-xs text-neutral-500 mt-1">Shown on character cards. Keep it punchy.</p>
+  </div>
+
+  <div>
+    <label class="block text-sm mb-1">Backstory</label>
+    <textarea name="backstory" rows="8" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" placeholder="Where did they come from? Who taught them? What shaped their style?"></textarea>
+    <p class="text-xs text-neutral-500 mt-1">Feeds memory generation. More specific = richer memories.</p>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm mb-1">Voice / tone</label>
+      <input name="voice_descriptor" maxlength="280" placeholder="e.g. gruff Russian grandmaster" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Quirks</label>
+      <input name="quirks" placeholder="habits, sayings, small tells" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+    </div>
+  </div>
+
+  <fieldset class="space-y-3 rounded border border-neutral-800 p-4">
+    <legend class="px-2 text-sm text-neutral-300">Style sliders (1–10)</legend>
+    {% for key, label in [
+      ("aggression", "Aggression"),
+      ("risk_tolerance", "Risk tolerance"),
+      ("patience", "Patience"),
+      ("trash_talk", "Trash talk"),
+    ] %}
+    <div class="flex items-center gap-4">
+      <label class="text-sm w-32">{{ label }}</label>
+      <input type="range" min="1" max="10" value="5" name="{{ key }}"
+             oninput="this.nextElementSibling.value = this.value"
+             class="flex-1 accent-emerald-400" />
+      <output class="text-sm w-6 text-right text-neutral-300">5</output>
+    </div>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset class="space-y-3 rounded border border-neutral-800 p-4">
+    <legend class="px-2 text-sm text-neutral-300">Skill</legend>
+    <div class="flex items-center gap-4">
+      <label class="text-sm w-32">Target Elo</label>
+      <input type="number" min="600" max="2600" step="50" value="1400" name="target_elo" class="w-32 rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+      <label class="text-sm flex items-center gap-2 ml-6">
+        <input type="checkbox" name="adaptive" value="1" class="accent-emerald-400" />
+        Adaptive (use target_elo as floor)
+      </label>
+    </div>
+  </fieldset>
+
+  <div>
+    <label class="block text-sm mb-1">Opening preferences</label>
+    <select name="opening_preferences" multiple size="10" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm">
+      {% for op in openings %}
+      <option value="{{ op.name }}">{{ op.eco }} — {{ op.name }} ({{ op.group }})</option>
+      {% endfor %}
+    </select>
+    <p class="text-xs text-neutral-500 mt-1">Ctrl/Cmd-click to pick multiple.</p>
+  </div>
+
+  <div class="pt-2">
+    <button class="rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
+      Create character
+    </button>
+    <a href="/" class="ml-3 text-sm text-neutral-400 hover:text-white">Cancel</a>
+  </div>
+</form>
+{% endblock %}
