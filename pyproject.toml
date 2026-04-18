@@ -1,0 +1,36 @@
+[project]
+name = "metropolis-chess-club"
+version = "0.1.0"
+description = "Metropolis Chess Club — a chess-playing AI character platform. Phase 1: characters + memories."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0.30",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "google-genai>=0.3.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "live: opt-in tests that call the real LLM (requires GEMINI_API_KEY and RUN_LIVE_LLM_TESTS=1)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
