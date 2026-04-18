@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     memory_gen_min: int = 30
     memory_gen_max: int = 50
 
+    # Phase 2 — engine + infra
+    redis_url: str = ""
+    maia2_cache_dir: str = ""
+    stockfish_path: str = ""
+
     @property
     def log_path(self) -> Path:
         p = Path(self.log_dir)
