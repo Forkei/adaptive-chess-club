@@ -1,20 +1,28 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.players import COOKIE_MAX_AGE, PLAYER_COOKIE
 from app.characters.openings import OPENINGS
 from app.characters.style import style_to_prompt_fragments
 from app.db import get_session
+from app.engine import EngineUnavailable
+from app.matches import service as match_service
 from app.memory.crud import counts_by_scope, counts_by_type, list_for_character
 from app.models.character import Character, CharacterState
+from app.models.match import Match, Player
 from app.schemas.character import CharacterCreate
+from app.schemas.match import MoveRead
+
+logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
@@ -102,6 +110,9 @@ def create_character_html(
         patience=payload.patience,
         trash_talk=payload.trash_talk,
         target_elo=payload.target_elo,
+        current_elo=payload.target_elo,
+        floor_elo=payload.target_elo,
+        max_elo=payload.max_elo if payload.max_elo is not None else payload.target_elo + 400,
         adaptive=payload.adaptive,
         opening_preferences=list(payload.opening_preferences),
         voice_descriptor=payload.voice_descriptor,
@@ -158,5 +169,89 @@ def character_detail(
             "samples_by_type": samples_by_type,
             "is_generating": character.state == CharacterState.GENERATING_MEMORIES,
             "is_failed": character.state == CharacterState.GENERATION_FAILED,
+        },
+    )
+
+
+# ------------------------------ Matches ------------------------------
+
+
+def _ensure_player_cookie(session: Session, player_id: str | None, response: Response) -> Player:
+    if player_id:
+        existing = session.get(Player, player_id)
+        if existing is not None:
+            return existing
+    player = Player(display_name="Guest")
+    session.add(player)
+    session.commit()
+    session.refresh(player)
+    response.set_cookie(
+        key=PLAYER_COOKIE,
+        value=player.id,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+    )
+    return player
+
+
+@router.post("/play/{character_id}")
+async def start_match_html(
+    character_id: str,
+    response: Response,
+    player_id: str | None = Cookie(default=None, alias=PLAYER_COOKIE),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    character = session.get(Character, character_id)
+    if character is None or character.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    redirect = RedirectResponse(url="/", status_code=303)
+    player = _ensure_player_cookie(session, player_id, redirect)
+
+    try:
+        match = match_service.create_match(
+            session,
+            character_id=character.id,
+            player_id=player.id,
+            player_color="random",
+        )
+        session.commit()
+        await match_service.start_match_play(session, match)
+        session.commit()
+    except EngineUnavailable as exc:
+        session.rollback()
+        logger.exception("Engine unavailable starting match for %s", character_id)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except match_service.MatchError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    redirect.headers["location"] = f"/matches/{match.id}"
+    return redirect
+
+
+@router.get("/matches/{match_id}", response_class=HTMLResponse)
+def match_page(
+    request: Request,
+    match_id: str,
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    match = session.get(Match, match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+    character = session.get(Character, match.character_id)
+
+    moves = [
+        MoveRead.model_validate(m).model_dump(mode="json") for m in sorted(match.moves, key=lambda m: m.move_number)
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "play.html",
+        {
+            "match": match,
+            "character": character,
+            "moves_json": moves,
         },
     )

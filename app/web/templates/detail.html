@@ -27,10 +27,19 @@
     </div>
     <p class="text-neutral-300 mt-1">{{ character.short_description }}</p>
     <div class="mt-3 text-sm text-neutral-400">
-      <span>Target {{ character.target_elo }} Elo</span>
+      <span>Current {{ character.current_elo }} / floor {{ character.floor_elo }} / max {{ character.max_elo }} Elo</span>
       {% if character.adaptive %} · <span>adaptive</span>{% endif %}
       {% if character.voice_descriptor %} · <span class="italic">{{ character.voice_descriptor }}</span>{% endif %}
     </div>
+  </div>
+  <div>
+    {% if not is_generating %}
+    <form method="post" action="/play/{{ character.id }}">
+      <button class="rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
+        ▶ Play
+      </button>
+    </form>
+    {% endif %}
   </div>
 </div>
 

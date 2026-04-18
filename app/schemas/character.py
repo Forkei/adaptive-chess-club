@@ -20,6 +20,8 @@ class CharacterCreate(BaseModel):
 
     target_elo: int = Field(1400, ge=600, le=2600)
     adaptive: bool = False
+    # `max_elo` optional on create: defaults to target_elo + 400 if not given.
+    max_elo: int | None = Field(None, ge=600, le=3000)
 
     opening_preferences: list[str] = Field(default_factory=list)
     voice_descriptor: str = Field("", max_length=280)
@@ -66,6 +68,9 @@ class CharacterSummary(BaseModel):
     state: CharacterState
     is_preset: bool
     target_elo: int
+    current_elo: int
+    floor_elo: int
+    max_elo: int
     adaptive: bool
     created_at: datetime
 
@@ -85,6 +90,9 @@ class CharacterRead(BaseModel):
     trash_talk: int
 
     target_elo: int
+    current_elo: int
+    floor_elo: int
+    max_elo: int
     adaptive: bool
 
     opening_preferences: list[str]

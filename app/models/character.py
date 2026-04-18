@@ -44,6 +44,12 @@ class Character(Base):
     # Skill
     target_elo: Mapped[int] = mapped_column(Integer, nullable=False, default=1400)
     adaptive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # `current_elo` is the live effective rating used by the Director each match.
+    # `floor_elo` ratchets up over time; current_elo never drops below it.
+    # `max_elo` is the hard ceiling.
+    current_elo: Mapped[int] = mapped_column(Integer, nullable=False, default=1400)
+    floor_elo: Mapped[int] = mapped_column(Integer, nullable=False, default=1400)
+    max_elo: Mapped[int] = mapped_column(Integer, nullable=False, default=1800)
 
     # Opening preferences: list of ECO codes (strings) stored as JSON.
     opening_preferences: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
@@ -90,6 +96,9 @@ class Character(Base):
             "trash_talk": self.trash_talk,
             "target_elo": self.target_elo,
             "adaptive": self.adaptive,
+            "current_elo": self.current_elo,
+            "floor_elo": self.floor_elo,
+            "max_elo": self.max_elo,
             "opening_preferences": list(self.opening_preferences or []),
             "voice_descriptor": self.voice_descriptor,
             "quirks": self.quirks,

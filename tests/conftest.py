@@ -23,6 +23,7 @@ from sqlalchemy import delete  # noqa: E402
 
 from app.db import SessionLocal, engine, init_db  # noqa: E402
 from app.models.character import Character  # noqa: E402
+from app.models.match import Match, Move, OpponentProfile, Player  # noqa: E402
 from app.models.memory import Memory  # noqa: E402
 
 
@@ -35,6 +36,10 @@ def _bootstrap_db() -> None:
 def _clean_tables():
     """Wipe every row before each test for deterministic state."""
     with engine.begin() as conn:
+        conn.execute(delete(Move))
+        conn.execute(delete(Match))
+        conn.execute(delete(OpponentProfile))
+        conn.execute(delete(Player))
         conn.execute(delete(Memory))
         conn.execute(delete(Character))
     yield
