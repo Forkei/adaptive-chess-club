@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-gemini-3.1-flash-lite-preview}"
+      DATABASE_URL: "sqlite:////app/data/metropolis_chess.db"
+      REDIS_URL: "redis://redis:6379/0"
+      STOCKFISH_PATH: "/usr/games/stockfish"
+      MAIA2_CACHE_DIR: "/app/.cache/maia2"
+      LOG_DIR: "/app/logs"
+      LOG_LEVEL: "INFO"
+    volumes:
+      - app-data:/app/data
+      - app-logs:/app/logs
+      - maia2-cache:/app/.cache/maia2
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+volumes:
+  app-data:
+  app-logs:
+  maia2-cache:
+  redis-data:
