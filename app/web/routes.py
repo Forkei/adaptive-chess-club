@@ -14,7 +14,7 @@ from app.api.players import COOKIE_MAX_AGE, PLAYER_COOKIE
 from app.characters.openings import OPENINGS
 from app.characters.style import style_to_prompt_fragments
 from app.db import get_session
-from app.engine import EngineUnavailable
+from app.engine import EngineUnavailable, available_engines
 from app.matches import service as match_service
 from app.memory.crud import counts_by_scope, counts_by_type, list_for_character
 from app.models.character import Character, CharacterState
@@ -246,6 +246,9 @@ def match_page(
         MoveRead.model_validate(m).model_dump(mode="json") for m in sorted(match.moves, key=lambda m: m.move_number)
     ]
 
+    engines = available_engines()
+    real_engines = [e for e in engines if e != "mock"]
+
     return templates.TemplateResponse(
         request,
         "play.html",
@@ -253,5 +256,7 @@ def match_page(
             "match": match,
             "character": character,
             "moves_json": moves,
+            "engines_available": engines,
+            "has_real_engine": bool(real_engines),
         },
     )

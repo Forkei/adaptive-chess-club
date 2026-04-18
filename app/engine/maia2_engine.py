@@ -86,7 +86,9 @@ class Maia2Engine(ChessEngine):
         elo_bucket = config.maia_elo_bucket or _clamp_to_maia_bucket(config.target_elo)
 
         with self._inf_lock:
-            move_probs, _win_prob, _value = inference.inference_each(
+            # maia2.inference.inference_each returns (move_probs: dict[uci, prob], win_prob: float).
+            # Verified against maia2 package v0.x in Docker.
+            move_probs, _win_prob = inference.inference_each(
                 Maia2Engine._model,
                 Maia2Engine._prepared,
                 board.fen(),

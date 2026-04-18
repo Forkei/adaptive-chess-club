@@ -9,6 +9,8 @@ env/
 *.db
 *.db-journal
 logs/
+screenshots/
 .DS_Store
 .idea/
 .vscode/
+.claude/

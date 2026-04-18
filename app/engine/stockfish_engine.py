@@ -72,7 +72,7 @@ class StockfishEngine(ChessEngine):
         target = max(1320, min(3190, config.target_elo))  # Stockfish UCI_Elo valid range
         self._sf.update_engine_parameters(
             {
-                "UCI_LimitStrength": "true",
+                "UCI_LimitStrength": True,
                 "UCI_Elo": target,
                 "Skill Level": config.skill_level
                 if config.skill_level is not None
