@@ -15,7 +15,9 @@ services:
     volumes:
       - app-data:/app/data
       - app-logs:/app/logs
-      - maia2-cache:/app/.cache/maia2
+      # maia2 hardcodes /app/maia2_models/ as the weight cache location
+      # (downloaded via gdown from Google Drive on first use).
+      - maia2-cache:/app/maia2_models
     depends_on:
       - redis
 

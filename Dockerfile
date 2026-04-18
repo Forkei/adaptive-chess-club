@@ -29,7 +29,17 @@ COPY pyproject.toml /app/
 RUN pip install --upgrade pip && \
     pip install -e "." && \
     pip install "torch>=2.2.0" --index-url https://download.pytorch.org/whl/cpu && \
-    pip install "maia2>=1.0.0"
+    pip install \
+        "maia2>=0.1.0" \
+        "numpy>=1.24.0" \
+        "tqdm>=4.65.0" \
+        "pandas>=2.0.0" \
+        "einops>=0.7.0" \
+        "huggingface_hub>=0.20.0" \
+        "safetensors>=0.4.0" \
+        "scikit-learn>=1.3.0" \
+        "pyzstd>=0.16.0" \
+        "gdown>=5.0.0"
 
 # Copy the app after deps — this layer churns per commit.
 COPY app /app/app
@@ -39,10 +49,13 @@ COPY tests /app/tests
 
 # Warm the Maia-2 cache. Non-fatal — if weights can't be fetched at build time,
 # they'll download on first inference instead.
-ENV MAIA2_CACHE_DIR=/app/.cache/maia2 \
+# Note: maia2's model.py downloads weights to /app/maia2_models/ (hardcoded
+# upstream), so that's the path we cache via a compose volume. MAIA2_CACHE_DIR
+# is kept as an env var for future-proofing if/when maia2 respects it.
+ENV MAIA2_CACHE_DIR=/app/maia2_models \
     HF_HOME=/app/.cache/maia2 \
     STOCKFISH_PATH=/usr/games/stockfish
-RUN mkdir -p /app/.cache/maia2 && \
+RUN mkdir -p /app/maia2_models /app/.cache/maia2 && \
     (python scripts/setup_engines.py || echo "engine pre-warm failed; continuing")
 
 # App runtime

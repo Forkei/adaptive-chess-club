@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.characters import router as characters_api
 from app.api.matches import router as matches_api
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Metropolis Chess Club", lifespan=lifespan)
+    app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
     app.include_router(characters_api)
     app.include_router(players_api)
     app.include_router(matches_api)

@@ -16,6 +16,11 @@
 {% endblock %}
 
 {% block content %}
+
+{# Top-of-page alert region. JS owns visibility + content. On page load we
+   seed it from server-side state (mock-only = amber; healthy = hidden). #}
+<div id="alert-banner" class="hidden mb-5 rounded border px-4 py-3 text-sm"></div>
+
 <div class="flex items-start gap-6 mb-6">
   <div class="text-5xl">{{ character.avatar_emoji or "♟" }}</div>
   <div class="flex-1">
@@ -47,7 +52,6 @@
     <div id="board" class="w-full max-w-[480px]"></div>
     <div class="mt-3 flex items-center gap-3">
       <button id="resign-btn" class="rounded bg-rose-900 hover:bg-rose-800 px-3 py-1.5 text-sm">Resign</button>
-      <div id="error-banner" class="text-sm text-rose-300 hidden"></div>
       <div id="thinking-banner" class="text-sm text-amber-300 hidden">{{ character.name }} is thinking…</div>
     </div>
   </div>
@@ -65,41 +69,59 @@
   const INITIAL_FEN = {{ match.current_fen | tojson }};
   const INITIAL_STATUS = {{ match.status.value | tojson }};
   const INITIAL_MOVES = {{ moves_json | tojson }};
+  const ENGINES_AVAILABLE = {{ engines_available | tojson }};
+  const HAS_REAL_ENGINE = {{ has_real_engine | tojson }};
 
   const game = new Chess(INITIAL_FEN);
   let gameOver = INITIAL_STATUS !== "in_progress";
+  // `movesBlocked` gates drag + submit. Starts true if no real engine is
+  // installed; the API would reject the move anyway, but blocking client-side
+  // gives a clear "nothing to fight" signal.
+  let movesBlocked = !HAS_REAL_ENGINE;
+
+  const BANNER_STYLES = {
+    error:   { cls: 'border-rose-700 bg-rose-950/60 text-rose-100',     prefix: '⚠ ' },
+    warn:    { cls: 'border-amber-700 bg-amber-950/60 text-amber-100',  prefix: '⚠ ' },
+    info:    { cls: 'border-sky-700  bg-sky-950/60  text-sky-100',      prefix: 'ℹ ' },
+  };
+
+  function showBanner(level, message) {
+    const el = document.getElementById('alert-banner');
+    const style = BANNER_STYLES[level] || BANNER_STYLES.error;
+    el.className = `mb-5 rounded border px-4 py-3 text-sm ${style.cls}`;
+    el.textContent = style.prefix + message;
+    el.classList.remove('hidden');
+  }
+
+  function hideBanner() {
+    const el = document.getElementById('alert-banner');
+    el.classList.add('hidden');
+    el.textContent = '';
+  }
+
+  function setThinking(on) {
+    document.getElementById('thinking-banner').classList.toggle('hidden', !on);
+  }
 
   const board = Chessboard('board', {
     draggable: true,
     position: INITIAL_FEN,
     orientation: PLAYER_COLOR,
-    pieceTheme: 'https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
     onDragStart: (source, piece) => {
-      if (gameOver) return false;
+      if (gameOver || movesBlocked) return false;
       if ((game.turn() === 'w' && PLAYER_COLOR !== 'white') ||
           (game.turn() === 'b' && PLAYER_COLOR !== 'black')) return false;
       if ((piece.startsWith('w') && PLAYER_COLOR !== 'white') ||
           (piece.startsWith('b') && PLAYER_COLOR !== 'black')) return false;
     },
     onDrop: (source, target) => {
-      // Always request a queen promotion for simplicity; fine for Phase 2a.
       const move = game.move({ from: source, to: target, promotion: 'q' });
       if (move === null) return 'snapback';
       submitMove(move.from + move.to + (move.promotion || ''));
     },
     onSnapEnd: () => board.position(game.fen()),
   });
-
-  function setError(msg) {
-    const el = document.getElementById('error-banner');
-    if (!msg) { el.classList.add('hidden'); return; }
-    el.textContent = msg;
-    el.classList.remove('hidden');
-  }
-
-  function setThinking(on) {
-    document.getElementById('thinking-banner').classList.toggle('hidden', !on);
-  }
 
   function renderMoves(moves) {
     const ol = document.getElementById('move-list');
@@ -132,7 +154,12 @@
   }
 
   async function submitMove(uci) {
-    setError('');
+    if (movesBlocked) {
+      game.undo();
+      board.position(game.fen());
+      return;
+    }
+    hideBanner();
     setThinking(true);
     try {
       const res = await fetch(`/api/matches/${MATCH_ID}/move`, {
@@ -142,15 +169,20 @@
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({detail: res.statusText}));
-        setError(err.detail || 'Move rejected');
-        // Roll back the client game state since server refused.
+        if (res.status === 503) {
+          movesBlocked = true;
+          showBanner('error', `Chess engine unavailable: ${err.detail || 'unknown error'}. Drag disabled — check the server logs and restart when resolved.`);
+        } else if (res.status === 400 || res.status === 409) {
+          showBanner('warn', err.detail || 'Move rejected');
+        } else {
+          showBanner('error', err.detail || `Server error (${res.status})`);
+        }
         game.undo();
         board.position(game.fen());
         setThinking(false);
         return;
       }
       const body = await res.json();
-      // Apply agent's move to the client game.
       if (body.agent_move) {
         game.move({
           from: body.agent_move.uci.slice(0,2),
@@ -162,7 +194,7 @@
       await refreshMoves();
       renderStatus(body.match, body.outcome);
     } catch (exc) {
-      setError('Network error: ' + exc);
+      showBanner('error', 'Network error: ' + exc);
       game.undo();
       board.position(game.fen());
     } finally {
@@ -188,5 +220,13 @@
   });
 
   renderMoves(INITIAL_MOVES);
+
+  // Startup banner: warn when only the fallback engine is installed.
+  if (!HAS_REAL_ENGINE) {
+    showBanner(
+      'warn',
+      'No real chess engine is installed — moves are disabled. Build the Docker image (torch + maia2 + stockfish) to enable gameplay.'
+    );
+  }
 </script>
 {% endblock %}
