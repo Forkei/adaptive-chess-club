@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.characters import router as characters_api
+from app.api.matches import router as matches_api
+from app.api.players import router as players_api
 from app.characters.seed import seed_presets
 from app.config import get_settings
 from app.db import init_db
@@ -38,6 +40,8 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="Metropolis Chess Club", lifespan=lifespan)
     app.include_router(characters_api)
+    app.include_router(players_api)
+    app.include_router(matches_api)
     app.include_router(web_router)
     return app
 
