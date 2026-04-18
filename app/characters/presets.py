@@ -22,6 +22,7 @@ class PresetSpec:
     patience: int
     trash_talk: int
     target_elo: int
+    max_elo: int
     adaptive: bool
     opening_preferences: list[str] = field(default_factory=list)
     voice_descriptor: str = ""
@@ -49,7 +50,8 @@ VIKTOR = PresetSpec(
     risk_tolerance=8,
     patience=4,
     trash_talk=8,
-    target_elo=2300,
+    target_elo=2200,
+    max_elo=2200,
     adaptive=False,
     opening_preferences=[
         "Sicilian Najdorf",
@@ -85,7 +87,8 @@ MARGOT = PresetSpec(
     risk_tolerance=2,
     patience=10,
     trash_talk=2,
-    target_elo=2450,
+    target_elo=2100,
+    max_elo=2100,
     adaptive=False,
     opening_preferences=[
         "Catalan Opening",
@@ -122,7 +125,8 @@ KENJI = PresetSpec(
     risk_tolerance=10,
     patience=1,
     trash_talk=10,
-    target_elo=2100,
+    target_elo=1700,
+    max_elo=1900,
     adaptive=True,
     opening_preferences=[
         "King's Gambit",
@@ -162,7 +166,8 @@ ARCHIBALD = PresetSpec(
     risk_tolerance=6,
     patience=6,
     trash_talk=4,
-    target_elo=1650,
+    target_elo=1600,
+    max_elo=1600,
     adaptive=False,
     opening_preferences=[
         "King's Gambit",

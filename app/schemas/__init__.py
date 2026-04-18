@@ -6,6 +6,17 @@ from app.schemas.character import (
     MemoryCountsByScope,
     MemoryCountsByType,
 )
+from app.schemas.match import (
+    ConsideredMove,
+    MatchCreate,
+    MatchRead,
+    MoveList,
+    MoveRead,
+    MoveResponse,
+    MoveSubmit,
+    PlayerCreate,
+    PlayerRead,
+)
 from app.schemas.memory import MemoryCreate, MemoryRead
 
 __all__ = [
