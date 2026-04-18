@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}Match — {{ character.name }}{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+<style>
+  /* Override chessboard.js's brown defaults for a darker look. */
+  .white-1e1d7 { background-color: #e6e6e6 !important; }
+  .black-3c85d { background-color: #525866 !important; }
+  .highlight-last { box-shadow: inset 0 0 0 3px rgba(16, 185, 129, 0.8); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex items-start gap-6 mb-6">
+  <div class="text-5xl">{{ character.avatar_emoji or "♟" }}</div>
+  <div class="flex-1">
+    <h1 class="text-2xl font-semibold">{{ character.name }}</h1>
+    <p class="text-sm text-neutral-400">
+      {{ character.short_description }}
+      · playing at ~{{ match.character_elo_at_start }} Elo
+      · you're <span id="player-color">{{ match.player_color.value }}</span>
+    </p>
+  </div>
+  <div class="text-right text-sm">
+    <div id="match-status" class="font-medium">
+      {% if match.status.value == "in_progress" %}
+        <span class="text-emerald-300">In progress</span>
+      {% elif match.status.value == "completed" %}
+        <span class="text-amber-300">Finished</span>
+      {% else %}
+        <span class="text-rose-300">Abandoned</span>
+      {% endif %}
+    </div>
+    <div class="text-neutral-500 text-xs" id="match-result">
+      {{ match.result.value if match.result else "" }}
+    </div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-[minmax(0,480px)_minmax(0,1fr)] gap-6">
+  <div>
+    <div id="board" class="w-full max-w-[480px]"></div>
+    <div class="mt-3 flex items-center gap-3">
+      <button id="resign-btn" class="rounded bg-rose-900 hover:bg-rose-800 px-3 py-1.5 text-sm">Resign</button>
+      <div id="error-banner" class="text-sm text-rose-300 hidden"></div>
+      <div id="thinking-banner" class="text-sm text-amber-300 hidden">{{ character.name }} is thinking…</div>
+    </div>
+  </div>
+
+  <div>
+    <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-2">Moves</h2>
+    <ol id="move-list" class="text-sm font-mono text-neutral-200 bg-neutral-900 border border-neutral-800 rounded p-4 h-[480px] overflow-y-auto">
+    </ol>
+  </div>
+</div>
+
+<script>
+  const MATCH_ID = {{ match.id | tojson }};
+  const PLAYER_COLOR = {{ match.player_color.value | tojson }};
+  const INITIAL_FEN = {{ match.current_fen | tojson }};
+  const INITIAL_STATUS = {{ match.status.value | tojson }};
+  const INITIAL_MOVES = {{ moves_json | tojson }};
+
+  const game = new Chess(INITIAL_FEN);
+  let gameOver = INITIAL_STATUS !== "in_progress";
+
+  const board = Chessboard('board', {
+    draggable: true,
+    position: INITIAL_FEN,
+    orientation: PLAYER_COLOR,
+    pieceTheme: 'https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/img/chesspieces/wikipedia/{piece}.png',
+    onDragStart: (source, piece) => {
+      if (gameOver) return false;
+      if ((game.turn() === 'w' && PLAYER_COLOR !== 'white') ||
+          (game.turn() === 'b' && PLAYER_COLOR !== 'black')) return false;
+      if ((piece.startsWith('w') && PLAYER_COLOR !== 'white') ||
+          (piece.startsWith('b') && PLAYER_COLOR !== 'black')) return false;
+    },
+    onDrop: (source, target) => {
+      // Always request a queen promotion for simplicity; fine for Phase 2a.
+      const move = game.move({ from: source, to: target, promotion: 'q' });
+      if (move === null) return 'snapback';
+      submitMove(move.from + move.to + (move.promotion || ''));
+    },
+    onSnapEnd: () => board.position(game.fen()),
+  });
+
+  function setError(msg) {
+    const el = document.getElementById('error-banner');
+    if (!msg) { el.classList.add('hidden'); return; }
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  function setThinking(on) {
+    document.getElementById('thinking-banner').classList.toggle('hidden', !on);
+  }
+
+  function renderMoves(moves) {
+    const ol = document.getElementById('move-list');
+    ol.innerHTML = '';
+    for (const m of moves) {
+      const li = document.createElement('li');
+      li.className = 'py-0.5';
+      const side = m.side === 'white' ? 'W' : 'B';
+      const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms, ${m.engine_name})` : '';
+      const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined)
+        ? ` [${(m.eval_cp/100).toFixed(1)}]`
+        : '';
+      li.textContent = `${m.move_number}. ${side} ${m.san}${evalStr}${timing}`;
+      ol.appendChild(li);
+    }
+    ol.scrollTop = ol.scrollHeight;
+  }
+
+  function renderStatus(match, outcome) {
+    const status = document.getElementById('match-status');
+    const result = document.getElementById('match-result');
+    if (match.status === 'in_progress') {
+      status.innerHTML = '<span class="text-emerald-300">In progress</span>';
+      result.textContent = '';
+    } else {
+      status.innerHTML = '<span class="text-amber-300">Finished</span>';
+      result.textContent = `${match.result || 'unknown'} — you ${outcome || '?'}`;
+      gameOver = true;
+    }
+  }
+
+  async function submitMove(uci) {
+    setError('');
+    setThinking(true);
+    try {
+      const res = await fetch(`/api/matches/${MATCH_ID}/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({uci}),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({detail: res.statusText}));
+        setError(err.detail || 'Move rejected');
+        // Roll back the client game state since server refused.
+        game.undo();
+        board.position(game.fen());
+        setThinking(false);
+        return;
+      }
+      const body = await res.json();
+      // Apply agent's move to the client game.
+      if (body.agent_move) {
+        game.move({
+          from: body.agent_move.uci.slice(0,2),
+          to: body.agent_move.uci.slice(2,4),
+          promotion: body.agent_move.uci.length > 4 ? body.agent_move.uci[4] : undefined,
+        });
+      }
+      board.position(game.fen());
+      await refreshMoves();
+      renderStatus(body.match, body.outcome);
+    } catch (exc) {
+      setError('Network error: ' + exc);
+      game.undo();
+      board.position(game.fen());
+    } finally {
+      setThinking(false);
+    }
+  }
+
+  async function refreshMoves() {
+    const res = await fetch(`/api/matches/${MATCH_ID}/moves`);
+    if (!res.ok) return;
+    const body = await res.json();
+    renderMoves(body.items);
+  }
+
+  document.getElementById('resign-btn').addEventListener('click', async () => {
+    if (gameOver) return;
+    if (!confirm('Resign this match?')) return;
+    const res = await fetch(`/api/matches/${MATCH_ID}/resign`, {method: 'POST'});
+    if (res.ok) {
+      const body = await res.json();
+      renderStatus(body, 'resigned');
+    }
+  });
+
+  renderMoves(INITIAL_MOVES);
+</script>
+{% endblock %}
