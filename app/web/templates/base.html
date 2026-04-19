@@ -55,6 +55,37 @@
     }
 
     html, body { background: var(--mp-bg); color: var(--mp-ink); }
+
+    /* Patch Pass 2 Item 7 — custom scrollbars.
+       Thin, brass-on-surface, hover brightens. Browser defaults clashed
+       with the dark/brass palette. Applied globally via `*` so every
+       scrollable element (overflow panels, chat ribbons, side drawers)
+       inherits without per-component wiring.
+       - Firefox: scrollbar-width / scrollbar-color.
+       - WebKit/Blink (Chrome, Edge, Safari): ::-webkit-scrollbar rules. */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--mp-brass-dim) transparent;
+    }
+    *::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    *::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    *::-webkit-scrollbar-thumb {
+      background: var(--mp-brass-dim);
+      border-radius: 4px;
+      border: 2px solid transparent;
+      background-clip: content-box;
+    }
+    *::-webkit-scrollbar-thumb:hover {
+      background: var(--mp-brass);
+      background-clip: content-box;
+    }
+    *::-webkit-scrollbar-corner { background: transparent; }
+
     body {
       font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif;
       font-weight: 400;
