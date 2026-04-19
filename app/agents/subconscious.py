@@ -74,6 +74,24 @@ class _CacheEntry:
 _CACHE: dict[str, _CacheEntry] = {}
 _CACHE_LOCK = threading.Lock()
 
+# Hit/miss counters for observability. Not persisted — zeroed per process.
+_CACHE_STATS = {"hits": 0, "misses": 0}
+
+
+def get_cache_stats() -> dict[str, int]:
+    """Return a snapshot of (hits, misses, total). Safe to call anywhere."""
+    with _CACHE_LOCK:
+        h = _CACHE_STATS["hits"]
+        m = _CACHE_STATS["misses"]
+    return {"hits": h, "misses": m, "total": h + m}
+
+
+def reset_cache_stats() -> None:
+    """Test helper."""
+    with _CACHE_LOCK:
+        _CACHE_STATS["hits"] = 0
+        _CACHE_STATS["misses"] = 0
+
 
 def _mood_chat_hash(text: str | None) -> str:
     if not text:
@@ -83,11 +101,20 @@ def _mood_chat_hash(text: str | None) -> str:
 
 def build_cache_key(
     *,
-    last_player_uci: str | None,
+    last_player_uci: str | None,  # kept in signature for backwards-compat callers; unused
     last_player_chat: str | None,
     mood: MoodState,
 ) -> str:
-    return f"{last_player_uci or 'none'}|{_mood_chat_hash(last_player_chat)}|{mood_polarity_bucket(mood)}"
+    """Cache key: (mood_polarity_bucket, chat_hash).
+
+    Patch Pass 1 change: `last_player_uci` was previously part of the key, which
+    changed every character turn by construction (the player moves between
+    turns), so the cache had a 0% hit rate. Dropping it lets consecutive
+    character turns share a cached surface when chat + mood polarity haven't
+    shifted — same memories stay 'on mind' without re-running retrieval + LLM.
+    """
+    del last_player_uci  # intentionally unused
+    return f"{_mood_chat_hash(last_player_chat)}|{mood_polarity_bucket(mood)}"
 
 
 def _read_cache(match_id: str, cache_key: str, current_turn: int) -> list[SurfacedMemory] | None:
@@ -342,13 +369,23 @@ def run_subconscious(
     )
     cached = _read_cache(inp.match_id, cache_key, inp.current_turn)
     if cached is not None:
-        logger.debug(
-            "Subconscious cache hit (match=%s turn=%d key=%s)",
-            inp.match_id,
-            inp.current_turn,
-            cache_key,
+        with _CACHE_LOCK:
+            _CACHE_STATS["hits"] += 1
+            total = _CACHE_STATS["hits"] + _CACHE_STATS["misses"]
+            hit_rate = _CACHE_STATS["hits"] / total if total else 0.0
+        logger.info(
+            "Subconscious cache HIT (match=%s turn=%d key=%s hit_rate=%.2f)",
+            inp.match_id, inp.current_turn, cache_key, hit_rate,
         )
         return cached
+    with _CACHE_LOCK:
+        _CACHE_STATS["misses"] += 1
+        total = _CACHE_STATS["hits"] + _CACHE_STATS["misses"]
+        hit_rate = _CACHE_STATS["hits"] / total if total else 0.0
+    logger.info(
+        "Subconscious cache MISS (match=%s turn=%d key=%s hit_rate=%.2f)",
+        inp.match_id, inp.current_turn, cache_key, hit_rate,
+    )
 
     # Fast-path: if this character has no memories, nothing to surface.
     from sqlalchemy import select as _select

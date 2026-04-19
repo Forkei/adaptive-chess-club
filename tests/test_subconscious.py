@@ -238,26 +238,60 @@ def test_cache_expires_after_ttl_turns(_stub_embed_text):
         assert m.surface_count == 2
 
 
-def test_cache_miss_on_different_key(_stub_embed_text):
+def test_cache_hit_across_turns_when_chat_and_mood_unchanged(_stub_embed_text):
+    """Patch Pass 1 item 8: consecutive character turns that differ only in
+    the player's UCI should now hit the cache, since uci was dropped from the
+    cache key. Mood bucket + chat hash are the only axes that matter."""
     with SessionLocal() as s:
         char = _make_character(s)
         bs = _board_summary_for()
         _make_memory(
             s, character_id=char.id, narrative=bs.prose, embedding=_fake_embed(bs.prose)
         )
-        run_subconscious(s, char, _make_input(char.id, turn=5, uci="e2e4"))
-        # Different last_player_uci → new key → recompute.
-        out = run_subconscious(s, char, _make_input(char.id, turn=6, uci="d2d4"))
+        first = run_subconscious(s, char, _make_input(char.id, turn=5, uci="e2e4"))
+        assert first
+        assert first[0].from_cache is False
+        # Same chat + mood, different player uci — should now be a cache HIT.
+        second = run_subconscious(s, char, _make_input(char.id, turn=6, uci="d2d4"))
+        assert second
+        assert second[0].from_cache is True
+
+
+def test_cache_miss_when_chat_changes(_stub_embed_text):
+    from app.agents.subconscious import SubconsciousInput
+    with SessionLocal() as s:
+        char = _make_character(s)
+        bs = _board_summary_for()
+        _make_memory(
+            s, character_id=char.id, narrative=bs.prose, embedding=_fake_embed(bs.prose)
+        )
+        inp1 = _make_input(char.id, turn=5, uci="e2e4")
+        inp2 = _make_input(char.id, turn=6, uci="e2e4")
+        # Override chat on the second call.
+        inp2 = SubconsciousInput(
+            character_id=inp2.character_id, match_id=inp2.match_id,
+            current_turn=inp2.current_turn, board_summary=inp2.board_summary,
+            mood=inp2.mood, last_player_uci=inp2.last_player_uci,
+            last_player_chat="new thing",
+            last_moves_san=inp2.last_moves_san, recent_chat=inp2.recent_chat,
+            opening_label=inp2.opening_label,
+            current_player_id=inp2.current_player_id,
+            opponent_style_features=inp2.opponent_style_features,
+        )
+        run_subconscious(s, char, inp1)
+        out = run_subconscious(s, char, inp2)
         assert out
         assert out[0].from_cache is False
 
 
-def test_build_cache_key_includes_all_inputs():
+def test_build_cache_key_drops_last_player_uci():
+    """Regression: uci must not affect the key (that's what killed the hit rate)."""
     mood = _mood_steady()
-    k1 = build_cache_key(last_player_uci="e2e4", last_player_chat=None, mood=mood)
-    k2 = build_cache_key(last_player_uci="e2e4", last_player_chat="hi", mood=mood)
-    k3 = build_cache_key(last_player_uci="d2d4", last_player_chat=None, mood=mood)
-    assert len({k1, k2, k3}) == 3
+    k_e4 = build_cache_key(last_player_uci="e2e4", last_player_chat=None, mood=mood)
+    k_d4 = build_cache_key(last_player_uci="d2d4", last_player_chat=None, mood=mood)
+    k_chat = build_cache_key(last_player_uci="e2e4", last_player_chat="hi", mood=mood)
+    assert k_e4 == k_d4  # uci doesn't affect key anymore
+    assert k_e4 != k_chat  # chat still does
 
 
 def test_llm_rerank_triggered_on_tight_margin(_stub_embed_text):
