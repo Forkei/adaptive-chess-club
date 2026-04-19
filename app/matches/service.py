@@ -84,17 +84,56 @@ def _board_from_match(match: Match) -> chess.Board:
     return chess.Board(match.current_fen)
 
 
+def board_with_history(match: Match, session: Session | None = None) -> chess.Board:
+    """Rebuild a board by replaying every Move from `initial_fen`.
+
+    Patch Pass 2 Item 3: `chess.Board(fen)` drops the move stack, so
+    `board.outcome(claim_draw=True)` can never detect 3-fold repetition.
+    Call this when you need the termination check to honour the
+    repetition rule (every time we ask "did the game just end?").
+
+    Pass `session` to fetch Move rows fresh — `match.moves` from a
+    relationship can be stale mid-flush (after session.add but before
+    commit, the collection may not reflect the newest row).
+    """
+    board = chess.Board(match.initial_fen or chess.STARTING_FEN)
+    if session is not None:
+        rows = list(
+            session.execute(
+                select(Move).where(Move.match_id == match.id).order_by(Move.move_number.asc())
+            ).scalars()
+        )
+    else:
+        rows = sorted(match.moves or [], key=lambda m: m.move_number)
+    for mv in rows:
+        try:
+            board.push(chess.Move.from_uci(mv.uci))
+        except Exception:
+            return chess.Board(match.current_fen)
+    return board
+
+
 def _char_color(match: Match) -> chess.Color:
     return chess.BLACK if match.player_color == Color.WHITE else chess.WHITE
 
 
 def _finalize_if_over(match: Match, board: chess.Board) -> None:
+    # Patch Pass 2 Item 3: callers now pass a board built from move-history
+    # replay, so `board.outcome(claim_draw=True)` and the mandatory-draw
+    # checks actually work. 5-fold and 75-move are mandatory and fire even
+    # without a claim.
+    if board.is_fivefold_repetition() or board.is_seventyfive_moves():
+        match.status = MatchStatus.COMPLETED
+        match.ended_at = datetime.utcnow()
+        match.character_elo_at_end = match.character_elo_at_start
+        match.result = MatchResult.DRAW
+        return
     outcome = board.outcome(claim_draw=True)
     if outcome is None:
         return
     match.status = MatchStatus.COMPLETED
     match.ended_at = datetime.utcnow()
-    match.character_elo_at_end = match.character_elo_at_start  # 2a: no ratchet during live play
+    match.character_elo_at_end = match.character_elo_at_start
     if outcome.winner is None:
         match.result = MatchResult.DRAW
     elif outcome.winner == chess.WHITE:
@@ -258,7 +297,7 @@ class AgentTurnOutcome:
 
 
 async def _engine_turn(session: Session, match: Match) -> tuple[Move, AgentTurnOutcome | None]:
-    board = _board_from_match(match)
+    board = board_with_history(match, session)  # history-aware for 3-fold detection
     character = session.get(Character, match.character_id)
     if character is None:
         raise MatchError("Character missing mid-match")
@@ -545,7 +584,7 @@ async def start_match_play(session: Session, match: Match) -> Move | None:
     """
     if match.status != MatchStatus.IN_PROGRESS:
         return None
-    board = _board_from_match(match)
+    board = board_with_history(match, session)
     if board.turn != _char_color(match):
         return None
     move, _outcome = await _engine_turn(session, match)
@@ -563,7 +602,7 @@ async def apply_player_move(
     if match.status != MatchStatus.IN_PROGRESS:
         raise GameAlreadyOver(match.status.value)
 
-    board = _board_from_match(match)
+    board = board_with_history(match, session)
     player_color = chess.WHITE if match.player_color == Color.WHITE else chess.BLACK
     if board.turn != player_color:
         raise NotYourTurn("It's not your turn")

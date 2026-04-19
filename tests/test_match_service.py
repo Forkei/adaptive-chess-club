@@ -325,6 +325,79 @@ def test_moves_after_resign_rejected(_force_mock_only):
     assert asyncio.run(_run()) is True
 
 
+def test_threefold_repetition_terminates_match(_force_mock_only):
+    """Patch Pass 2 Item 3 regression.
+
+    Real-play bug: engine shuffled Ng1/Nf3/Ng1/Nf3 and the match kept going
+    because `board.outcome(claim_draw=True)` on a board rebuilt from FEN
+    alone (no move stack) never detects repetition.
+
+    We seed the Move table with a 7-ply shuffle that leaves the board two
+    plies away from the 3-fold claim trigger, then play one more player
+    move + engine reply to hit the threefold position, and assert the
+    match transitions to COMPLETED with result=DRAW.
+    """
+    import chess
+    from app.models.match import Color, Match, MatchStatus, Move, MatchResult
+
+    # Construct the complete 8-ply Nf3/Ng1/Nc6/Nb8 shuffle. The position
+    # AFTER the 8th half-move (black playing Nb8 for the 2nd time) is
+    # identical to the starting position a third time (counting the initial
+    # position) — so the board claim_draw detection fires.
+    shuffle_ucis = [
+        "g1f3", "b8c6",
+        "f3g1", "c6b8",
+        "g1f3", "b8c6",
+        "f3g1", "c6b8",
+    ]
+
+    async def _run():
+        with SessionLocal() as s:
+            char = _character(s)
+            player = _player(s)
+            match = service.create_match(
+                s, character_id=char.id, player_id=player.id, player_color="white"
+            )
+            s.commit()
+            match_id = match.id
+
+        # Seed all 8 shuffle plies directly as Move rows so we control the
+        # exact sequence (MockEngine's first-legal-move pick wouldn't
+        # reproduce this). Then call _finalize_if_over via the service.
+        with SessionLocal() as s:
+            match = service.get_match(s, match_id)
+            board = chess.Board(match.initial_fen)
+            for idx, uci in enumerate(shuffle_ucis, start=1):
+                mv = chess.Move.from_uci(uci)
+                san = board.san(mv)
+                board.push(mv)
+                s.add(Move(
+                    match_id=match.id,
+                    move_number=idx,
+                    side=Color.WHITE if idx % 2 == 1 else Color.BLACK,
+                    uci=uci,
+                    san=san,
+                    fen_after=board.fen(),
+                    considered_moves=[],
+                ))
+            match.current_fen = board.fen()
+            match.move_count = len(shuffle_ucis)
+            s.commit()
+
+            # Now rebuild with history and verify `_finalize_if_over` catches it.
+            history_board = service.board_with_history(match, s)
+            assert history_board.is_repetition(3)
+            service._finalize_if_over(match, history_board)
+            s.commit()
+            return service.get_match(s, match_id)
+
+    final_match = asyncio.run(_run())
+    assert final_match.status == MatchStatus.COMPLETED, (
+        f"Expected COMPLETED after repetition, got {final_match.status}"
+    )
+    assert final_match.result == MatchResult.DRAW
+
+
 def test_full_match_reaches_terminal_state(_force_mock_only):
     """Mock engine plays Nxa3-a3b5-... kind of deterministic sequence.
 

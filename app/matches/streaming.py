@@ -119,6 +119,11 @@ def _finalize_outcome(match: Match, board: chess.Board) -> tuple[str, str, str |
     """If the board terminated, set status/result on the match and return (reason, result, outcome).
 
     Does NOT commit. Caller owns the session.
+
+    Patch Pass 2 Item 3: caller must pass a history-aware board (built via
+    `board_with_history`) so 3-fold / 5-fold repetition + 75-move checks
+    actually fire. Boards built from FEN alone have no move stack and
+    silently miss every repetition draw.
     """
     if match.status != MatchStatus.IN_PROGRESS:
         # Already ended via resign or disconnect-timeout.
@@ -128,6 +133,15 @@ def _finalize_outcome(match: Match, board: chess.Board) -> tuple[str, str, str |
         if match.status == MatchStatus.ABANDONED:
             return "disconnect_timeout", "abandoned", "resigned"
         return None
+
+    # Mandatory draws (don't require a claim).
+    if board.is_fivefold_repetition() or board.is_seventyfive_moves():
+        match.status = MatchStatus.COMPLETED
+        match.ended_at = datetime.utcnow()
+        match.character_elo_at_end = match.character_elo_at_start
+        match.result = MatchResult.DRAW
+        reason = "fivefold_repetition" if board.is_fivefold_repetition() else "seventyfive_moves"
+        return reason, "draw", "draw"
 
     outcome = board.outcome(claim_draw=True)
     if outcome is None:
@@ -139,7 +153,13 @@ def _finalize_outcome(match: Match, board: chess.Board) -> tuple[str, str, str |
 
     if outcome.winner is None:
         match.result = MatchResult.DRAW
-        reason = "stalemate" if outcome.termination.name == "STALEMATE" else "draw_rule"
+        term = outcome.termination.name
+        if term == "STALEMATE":
+            reason = "stalemate"
+        elif term == "THREEFOLD_REPETITION":
+            reason = "threefold_repetition"
+        else:
+            reason = "draw_rule"
         return reason, "draw", "draw"
 
     if outcome.winner == chess.WHITE:
@@ -274,7 +294,9 @@ def _stash_trailing_chat(match: Match, pending: list[dict[str, Any]]) -> None:
 
 
 def _persist_player_move(session, match: Match, uci: str, player_chat: str | None) -> Move:
-    board = chess.Board(match.current_fen)
+    # Patch Pass 2 Item 3: build the board from move history, not just the
+    # current FEN, so the upcoming finalization can detect repetition draws.
+    board = _svc.board_with_history(match, session)
     player_color = chess.WHITE if match.player_color == Color.WHITE else chess.BLACK
     if board.turn != player_color:
         raise NotYourTurn("It's not your turn")
@@ -371,7 +393,8 @@ async def apply_player_move_streamed(
         pending_before = _drain_pending_chat(match)
         merged_chat = _merge_player_chat(pending_before, player_chat)
         player_row = _persist_player_move(session, match, uci, merged_chat)
-        board_after_player = chess.Board(match.current_fen)
+        # Patch Pass 2 Item 3: history-aware for 3-fold detection.
+        board_after_player = _svc.board_with_history(match, session)
         end_info = _finalize_outcome(match, board_after_player)
         if end_info is not None:
             # Match just ended on the player's move. Any chat still in pending
@@ -423,7 +446,9 @@ async def _run_engine_and_agents(
         save_mood(match.id, smoothed, smoothed=True)
         save_mood(match.id, raw, smoothed=False)
 
-        board = chess.Board(match.current_fen)
+        # Patch Pass 2 Item 3: rebuild from move history so post-move
+        # finalization can detect 3-fold / 5-fold repetition.
+        board = _svc.board_with_history(match, session)
 
         available = frozenset(available_engines())
         if not available:
@@ -537,7 +562,8 @@ async def _run_engine_and_agents(
     with SessionLocal() as session:
         match = session.get(Match, match_id_local)
         assert match is not None
-        board_before = chess.Board(match.current_fen)
+        # Patch Pass 2 Item 3: history-aware for 3-fold detection post-engine.
+        board_before = _svc.board_with_history(match, session)
         engine_move_row = _persist_engine_move(
             session, match, engine_result, board_before,
             mood_snapshot=mood_snapshot_for_move,
@@ -620,7 +646,8 @@ async def _run_engine_and_agents(
             match.extra_state = state
 
         # Did the engine's move end the game?
-        board_after_engine = chess.Board(match.current_fen)
+        # Patch Pass 2 Item 3: history-aware for 3-fold / 5-fold detection.
+        board_after_engine = _svc.board_with_history(match, session)
         end_info = _finalize_outcome(match, board_after_engine)
         if end_info is not None:
             # Match ended on the engine's move. Any pending player chat has no
