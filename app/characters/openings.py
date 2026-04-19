@@ -75,6 +75,8 @@ OPENINGS: list[Opening] = [
     {"eco": "C30", "name": "King's Gambit", "group": "gambit"},
     {"eco": "C21", "name": "Danish Gambit", "group": "gambit"},
     {"eco": "C51", "name": "Evans Gambit", "group": "gambit"},
+    {"eco": "C44", "name": "Scotch Gambit", "group": "gambit"},
+    {"eco": "C25", "name": "Vienna Gambit", "group": "gambit"},
     {"eco": "D08", "name": "Albin Counter-Gambit", "group": "gambit"},
     {"eco": "A52", "name": "Budapest Gambit", "group": "gambit"},
     {"eco": "D00", "name": "Blackmar-Diemer Gambit", "group": "gambit"},

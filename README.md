@@ -284,6 +284,14 @@ The 3a migration:
 - Creates a `legacy_system` Player and assigns all pre-existing ownerless non-preset characters to them (so they stay accessible after ownership goes live).
 - Applies preset ratings (Viktor + Kenji → mature; Margot + Archibald → family).
 
+**Refreshing preset openings on an existing DB**: the seed logic skips already-seeded presets, so tweaks to a `PresetSpec.opening_preferences` do not flow to rows that exist. Use the helper script (safe to run any time; idempotent):
+
+```bash
+python -m scripts.refresh_preset_openings
+```
+
+It overwrites only `opening_preferences` on matching preset rows. Memories, Elo state, and voice are left alone.
+
 **For a fresh DB**: `create_all` at app startup creates the full current schema. Stamp at head to record it:
 ```bash
 alembic stamp head

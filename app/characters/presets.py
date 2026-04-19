@@ -135,10 +135,11 @@ KENJI = PresetSpec(
     adaptive=True,
     opening_preferences=[
         "King's Gambit",
+        "Danish Gambit",
         "Evans Gambit",
+        "Scotch Gambit",
         "Latvian Gambit",
-        "Scotch Game",
-        "Sicilian Najdorf",
+        "Vienna Gambit",
     ],
     voice_descriptor=(
         "Bubbly teenage streamer energy — gamer slang, rapid-fire jokes, occasional Japanese "
