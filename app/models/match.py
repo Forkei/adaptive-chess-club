@@ -93,6 +93,7 @@ class Match(Base):
         Enum(MatchStatus, name="match_status"),
         nullable=False,
         default=MatchStatus.IN_PROGRESS,
+        index=True,
     )
     result: Mapped[MatchResult | None] = mapped_column(
         Enum(MatchResult, name="match_result"), nullable=True
@@ -111,7 +112,7 @@ class Match(Base):
     extra_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     player: Mapped[Player] = relationship(back_populates="matches")
     moves: Mapped[list["Move"]] = relationship(

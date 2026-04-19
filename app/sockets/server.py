@@ -30,7 +30,7 @@ from sqlalchemy import select
 from app.auth import PLAYER_COOKIE
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models.character import Character
+from app.models.character import Character, Visibility, rating_allowed
 from app.models.match import Match, MatchStatus, Move, Player
 from app.sockets import disconnect as disconnect_registry
 from app.sockets.events import (
@@ -39,6 +39,7 @@ from app.sockets.events import (
     C2S_PLAYER_CHAT,
     C2S_REQUEST_STATE,
     C2S_RESIGN,
+    C2S_SPECTATOR_CHAT,
     NAMESPACE,
     S2C_AGENT_CHAT,
     S2C_AGENT_MOVE,
@@ -50,10 +51,17 @@ from app.sockets.events import (
     S2C_MATCH_STATE,
     S2C_MEMORY_SURFACED,
     S2C_MOOD_UPDATE,
+    S2C_PLAYER_CHAT_BROADCAST,
     S2C_PLAYER_CHAT_ECHOED,
     S2C_PLAYER_CHAT_RATE_LIMITED,
     S2C_PLAYER_MOVE_APPLIED,
     S2C_PONG,
+    S2C_SPECTATOR_CHAT_BROADCAST,
+    S2C_SPECTATOR_CHAT_ECHOED,
+    S2C_SPECTATOR_CHAT_REJECTED,
+    S2C_SPECTATOR_COUNT,
+    S2C_SPECTATOR_JOINED,
+    S2C_SPECTATOR_LEFT,
     AgentChatPayload,
     AgentMovePayload,
     AgentThinkingPayload,
@@ -67,11 +75,18 @@ from app.sockets.events import (
     MemorySurfacedPayload,
     MoodUpdatePayload,
     MoveSnapshot,
+    PlayerChatBroadcastPayload,
     PlayerChatEchoedPayload,
     PlayerChatEvent,
     PlayerChatRateLimitedPayload,
     PlayerMoveAppliedPayload,
     PongPayload,
+    SpectatorChatBroadcastPayload,
+    SpectatorChatEvent,
+    SpectatorChatRejectedPayload,
+    SpectatorCountPayload,
+    SpectatorJoinedPayload,
+    SpectatorLeftPayload,
     match_room_name,
 )
 
@@ -245,6 +260,26 @@ def _append_pending_chat(match: Match, text: str) -> None:
     match.extra_state = state
 
 
+# --- Role helpers ---------------------------------------------------------
+
+ROLE_PARTICIPANT = "participant"
+ROLE_SPECTATOR = "spectator"
+
+# Per-match spectator count cache. The server has the room membership already;
+# this mirror keeps counts cheap to broadcast.
+_spectator_counts: dict[str, int] = {}
+
+
+def _spectator_count(match_id: str) -> int:
+    return _spectator_counts.get(match_id, 0)
+
+
+def _bump_spectator_count(match_id: str, delta: int) -> int:
+    new = max(0, _spectator_counts.get(match_id, 0) + delta)
+    _spectator_counts[match_id] = new
+    return new
+
+
 # --- Connect / disconnect --------------------------------------------------
 
 
@@ -260,25 +295,44 @@ async def _on_connect(sid, environ, auth):
         logger.info("Socket.IO rejected: no match_id param (sid=%s)", sid)
         return False
 
+    username = ""
+    role = ROLE_PARTICIPANT
     with SessionLocal() as session:
         player = _resolve_player(session, player_id)
         if player is None:
             logger.info("Socket.IO rejected: invalid player cookie (sid=%s)", sid)
             return False
+        username = player.username
 
         match = _resolve_match(session, match_id)
         if match is None:
             logger.info("Socket.IO rejected: match not found (sid=%s match=%s)", sid, match_id)
             return False
 
-        # Ownership check: in 3b, only the match's player may join. Spectator
-        # support lands in 3c.
-        if match.player_id != player.id:
-            logger.info(
-                "Socket.IO rejected: player %s not on match %s (sid=%s)",
-                player.id, match_id, sid,
-            )
-            return False
+        if match.player_id == player.id:
+            role = ROLE_PARTICIPANT
+        else:
+            # Spectator gate: character must be visible to the viewer.
+            character = session.get(Character, match.character_id)
+            if character is None or character.deleted_at is not None:
+                logger.info("Socket.IO rejected spectator: character missing (sid=%s)", sid)
+                return False
+            if character.visibility == Visibility.PRIVATE and character.owner_id != player.id:
+                logger.info(
+                    "Socket.IO rejected spectator: character %s private (sid=%s player=%s)",
+                    character.id, sid, player.id,
+                )
+                return False
+            if not rating_allowed(character.content_rating, player.max_content_rating):
+                logger.info(
+                    "Socket.IO rejected spectator: rating (sid=%s player=%s)", sid, player.id
+                )
+                return False
+            # 3b spec: abandoned matches aren't spectatable.
+            if match.status == MatchStatus.ABANDONED:
+                logger.info("Socket.IO rejected spectator: match abandoned (sid=%s)", sid)
+                return False
+            role = ROLE_SPECTATOR
 
         state_payload = _build_match_state(session, match)
 
@@ -287,14 +341,18 @@ async def _on_connect(sid, environ, auth):
         {
             "player_id": player_id,
             "match_id": match_id,
+            "username": username,
+            "role": role,
             "last_chat_ms": 0,
         },
         namespace=NAMESPACE,
     )
     await sio.enter_room(sid, match_room(match_id), namespace=NAMESPACE)
 
-    # Cancel any in-flight disconnect cooldown — the player is back.
-    resumed = disconnect_registry.cancel(match_id)
+    # Cancel any in-flight disconnect cooldown — the participant is back.
+    resumed = False
+    if role == ROLE_PARTICIPANT:
+        resumed = disconnect_registry.cancel(match_id)
 
     await sio.emit(
         S2C_MATCH_STATE,
@@ -319,7 +377,34 @@ async def _on_connect(sid, environ, auth):
                 match.extra_state = state
                 session.commit()
 
-    logger.info("Socket.IO connect sid=%s player=%s match=%s", sid, player_id, match_id)
+    if role == ROLE_SPECTATOR:
+        count = _bump_spectator_count(match_id, +1)
+        await sio.emit(
+            S2C_SPECTATOR_JOINED,
+            SpectatorJoinedPayload(username=username).model_dump(mode="json"),
+            room=match_room(match_id),
+            namespace=NAMESPACE,
+        )
+        await sio.emit(
+            S2C_SPECTATOR_COUNT,
+            SpectatorCountPayload(count=count).model_dump(mode="json"),
+            room=match_room(match_id),
+            namespace=NAMESPACE,
+        )
+    else:
+        # Let the just-connected participant know how many spectators are already watching.
+        count = _spectator_count(match_id)
+        if count:
+            await sio.emit(
+                S2C_SPECTATOR_COUNT,
+                SpectatorCountPayload(count=count).model_dump(mode="json"),
+                to=sid,
+                namespace=NAMESPACE,
+            )
+
+    logger.info(
+        "Socket.IO connect sid=%s player=%s match=%s role=%s", sid, player_id, match_id, role,
+    )
 
 
 @sio.on("disconnect", namespace=NAMESPACE)
@@ -330,16 +415,34 @@ async def _on_disconnect(sid):
         return
     match_id = session_dict.get("match_id")
     player_id = session_dict.get("player_id")
+    role = session_dict.get("role", ROLE_PARTICIPANT)
+    username = session_dict.get("username", "")
     if not match_id or not player_id:
         return
 
-    # If the match already ended, nothing to do.
+    if role == ROLE_SPECTATOR:
+        count = _bump_spectator_count(match_id, -1)
+        await sio.emit(
+            S2C_SPECTATOR_LEFT,
+            SpectatorLeftPayload(username=username).model_dump(mode="json"),
+            room=match_room(match_id),
+            namespace=NAMESPACE,
+        )
+        await sio.emit(
+            S2C_SPECTATOR_COUNT,
+            SpectatorCountPayload(count=count).model_dump(mode="json"),
+            room=match_room(match_id),
+            namespace=NAMESPACE,
+        )
+        logger.info("Socket.IO spectator disconnect sid=%s match=%s", sid, match_id)
+        return
+
+    # Participant disconnect: arm the cooldown if the match is still active.
     with SessionLocal() as session:
         match = _resolve_match(session, match_id)
         if match is None or match.status != MatchStatus.IN_PROGRESS:
             return
         if match.player_id != player_id:
-            # Idle tab by a different cookie (3c spectator pre-hook) — no cooldown.
             return
         state = dict(match.extra_state or {})
         state["disconnect_started_at"] = datetime.utcnow().isoformat()
@@ -347,13 +450,11 @@ async def _on_disconnect(sid):
         match.extra_state = state
         session.commit()
 
-    # Schedule the abandonment task. `_on_disconnect_timeout` runs in the main loop.
     deadline = disconnect_registry.start(
         match_id,
         player_id=player_id,
         on_timeout=_on_disconnect_timeout,
     )
-    # Other sockets still attached to the room (none in 3b, but cheap to emit) get a pause.
     await sio.emit(
         S2C_MATCH_PAUSED,
         MatchPausedPayload(
@@ -364,7 +465,7 @@ async def _on_disconnect(sid):
         room=match_room(match_id),
         namespace=NAMESPACE,
     )
-    logger.info("Socket.IO disconnect sid=%s match=%s — cooldown armed", sid, match_id)
+    logger.info("Socket.IO participant disconnect sid=%s match=%s — cooldown armed", sid, match_id)
 
 
 async def _on_disconnect_timeout(match_id: str) -> None:
@@ -448,8 +549,15 @@ async def _on_request_state(sid, _data=None):
 async def _on_player_chat(sid, data):
     sess = await sio.get_session(sid, namespace=NAMESPACE)
     match_id = sess.get("match_id")
+    role = sess.get("role", ROLE_PARTICIPANT)
+    username = sess.get("username", "")
     if not match_id:
         await _send_error(sid, "no_match", "Socket has no bound match.")
+        return
+    if role != ROLE_PARTICIPANT:
+        # Spectators speak via `spectator_chat`, not `player_chat`.
+        await _send_error(sid, "spectator_cannot_player_chat",
+                          "Spectators must use spectator_chat.")
         return
 
     try:
@@ -484,6 +592,79 @@ async def _on_player_chat(sid, data):
         to=sid,
         namespace=NAMESPACE,
     )
+    # Broadcast to spectators so they see the dialogue with the character.
+    # Participant's own socket also receives this but the client dedupes against
+    # the optimistic bubble it already rendered.
+    await sio.emit(
+        S2C_PLAYER_CHAT_BROADCAST,
+        PlayerChatBroadcastPayload(
+            username=username, text=event.text, timestamp=received_at,
+        ).model_dump(mode="json"),
+        room=match_room(match_id),
+        skip_sid=sid,
+        namespace=NAMESPACE,
+    )
+
+
+# --- Event: spectator_chat ------------------------------------------------
+
+
+@sio.on(C2S_SPECTATOR_CHAT, namespace=NAMESPACE)
+async def _on_spectator_chat(sid, data):
+    sess = await sio.get_session(sid, namespace=NAMESPACE)
+    match_id = sess.get("match_id")
+    role = sess.get("role", ROLE_PARTICIPANT)
+    username = sess.get("username", "")
+    if not match_id:
+        await _send_error(sid, "no_match", "Socket has no bound match.")
+        return
+    if role != ROLE_SPECTATOR:
+        # Participants have their own channel; spectator_chat would bypass the
+        # Subconscious buffer which is the whole point — reject loudly.
+        await sio.emit(
+            S2C_SPECTATOR_CHAT_REJECTED,
+            SpectatorChatRejectedPayload().model_dump(mode="json"),
+            to=sid,
+            namespace=NAMESPACE,
+        )
+        return
+
+    try:
+        event = SpectatorChatEvent.model_validate(data or {})
+    except Exception as exc:
+        await _send_error(sid, "bad_payload", f"Invalid spectator_chat payload: {exc}")
+        return
+
+    ok, retry_after = _rate_limit_ok(sess)
+    await sio.save_session(sid, sess, namespace=NAMESPACE)
+    if not ok:
+        await sio.emit(
+            S2C_PLAYER_CHAT_RATE_LIMITED,
+            PlayerChatRateLimitedPayload(retry_after_ms=retry_after).model_dump(mode="json"),
+            to=sid,
+            namespace=NAMESPACE,
+        )
+        return
+
+    now = datetime.utcnow()
+    await sio.emit(
+        S2C_SPECTATOR_CHAT_ECHOED,
+        PlayerChatEchoedPayload(text=event.text, received_at=now).model_dump(mode="json"),
+        to=sid,
+        namespace=NAMESPACE,
+    )
+    # Broadcast to the whole room — participant + other spectators. Crucially,
+    # `spectator_chat` is NOT written into `match.extra_state.pending_player_chat`,
+    # so the character never sees it.
+    await sio.emit(
+        S2C_SPECTATOR_CHAT_BROADCAST,
+        SpectatorChatBroadcastPayload(
+            username=username, text=event.text, timestamp=now,
+        ).model_dump(mode="json"),
+        room=match_room(match_id),
+        skip_sid=sid,
+        namespace=NAMESPACE,
+    )
 
 
 # --- Event: make_move ------------------------------------------------------
@@ -493,8 +674,12 @@ async def _on_player_chat(sid, data):
 async def _on_make_move(sid, data):
     sess = await sio.get_session(sid, namespace=NAMESPACE)
     match_id = sess.get("match_id")
+    role = sess.get("role", ROLE_PARTICIPANT)
     if not match_id:
         await _send_error(sid, "no_match", "Socket has no bound match.")
+        return
+    if role != ROLE_PARTICIPANT:
+        await _send_error(sid, "spectator_cannot_move", "Spectators cannot make moves.")
         return
 
     try:
@@ -540,8 +725,12 @@ async def _on_make_move(sid, data):
 async def _on_resign(sid, _data=None):
     sess = await sio.get_session(sid, namespace=NAMESPACE)
     match_id = sess.get("match_id")
+    role = sess.get("role", ROLE_PARTICIPANT)
     if not match_id:
         await _send_error(sid, "no_match", "Socket has no bound match.")
+        return
+    if role != ROLE_PARTICIPANT:
+        await _send_error(sid, "spectator_cannot_resign", "Spectators cannot resign.")
         return
 
     from app.matches import service as match_service

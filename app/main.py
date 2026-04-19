@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.characters import router as characters_api
+from app.api.discovery import router as discovery_api
 from app.api.matches import router as matches_api
 from app.api.players import router as players_api
 from app.auth import NotAuthenticated
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
     app.include_router(characters_api)
     app.include_router(players_api)
     app.include_router(matches_api)
+    app.include_router(discovery_api)
     app.include_router(web_router)
 
     @app.exception_handler(NotAuthenticated)

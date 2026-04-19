@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+
+{% block title %}Watching {{ character.name }} vs @{{ match_owner.username }}{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  .white-1e1d7 { background-color: #e6e6e6 !important; }
+  .black-3c85d { background-color: #525866 !important; }
+  .memory-ribbon { transition: opacity 0.8s ease-in-out; }
+  .memory-ribbon.fading { opacity: 0.35; }
+  .chat-bubble-agent {
+    background: linear-gradient(180deg, rgba(71,85,105,0.35), rgba(51,65,85,0.25));
+    border-left: 2px solid #60a5fa;
+  }
+  .chat-bubble-player {
+    background: linear-gradient(180deg, rgba(29,78,216,0.2), rgba(29,78,216,0.1));
+    border-left: 2px solid #f59e0b;
+    margin-left: 1.5rem;
+  }
+  .chat-bubble-spectator {
+    background: rgba(15, 23, 42, 0.4);
+    border-left: 2px solid #a78bfa;
+  }
+  .chat-bubble-spectator.in-transit { opacity: 0.6; }
+  .conn-live   { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
+  .conn-retry  { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+  .conn-lost   { background: rgba(244, 63, 94, 0.18); color: #fda4af; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex items-start gap-6 mb-4">
+  <div class="text-5xl">{{ character.avatar_emoji or "♟" }}</div>
+  <div class="flex-1">
+    <h1 class="text-2xl font-semibold">{{ character.name }} <span class="text-neutral-500 text-base font-normal">vs @{{ match_owner.username }}</span></h1>
+    <p class="text-sm text-neutral-400">
+      {{ character.short_description }}
+      · playing at ~{{ match.character_elo_at_start }} Elo
+      · spectating as <span class="text-indigo-300">@{{ player.username }}</span>
+    </p>
+    <p class="text-xs text-neutral-500 mt-1">
+      mood: <span id="emotion-indicator" class="font-medium text-neutral-300">—</span>
+    </p>
+  </div>
+  <div class="text-right text-sm">
+    <div id="match-status" class="font-medium">
+      {% if match.status.value == "in_progress" %}
+        <span class="text-emerald-300">In progress</span>
+      {% elif match.status.value == "completed" %}
+        <span class="text-amber-300">Finished</span>
+      {% else %}
+        <span class="text-rose-300">Abandoned</span>
+      {% endif %}
+    </div>
+    <div class="text-neutral-500 text-xs" id="match-result">
+      {{ match.result.value if match.result else "" }}
+    </div>
+    <div id="conn-pill" class="mt-2 inline-block rounded px-2 py-0.5 text-[10px] uppercase tracking-wider conn-retry">
+      connecting…
+    </div>
+    <div id="spectator-count" class="mt-1 text-[10px] text-neutral-500 uppercase tracking-wider">— watching</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-[minmax(0,480px)_minmax(0,1fr)] gap-6">
+  <div>
+    <div id="board" class="w-full max-w-[480px]"></div>
+    <div id="memory-ribbon" class="hidden mt-4 text-sm italic text-neutral-400 border-l-2 border-indigo-700/60 pl-3 memory-ribbon">
+      <span id="memory-ribbon-lede">{{ character.name }} is reminded of something…</span>
+      <div id="memory-ribbon-items" class="mt-2 space-y-2"></div>
+    </div>
+  </div>
+
+  <div class="flex flex-col gap-4 min-h-[480px]">
+    <div>
+      <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-2">Table talk</h2>
+      <div id="chat-log" class="text-sm text-neutral-200 bg-neutral-900 border border-neutral-800 rounded p-4 h-[220px] overflow-y-auto space-y-2">
+        <div class="text-xs text-neutral-500 italic">No messages yet.</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm uppercase tracking-wider text-neutral-400">Crowd noise</h2>
+        <span class="text-[10px] text-neutral-500 italic">the character can't hear you</span>
+      </div>
+      <div id="spectator-log" class="text-sm text-neutral-300 bg-neutral-900 border border-neutral-800 rounded p-4 h-[180px] overflow-y-auto space-y-2">
+        <div class="text-xs text-neutral-500 italic">Say something…</div>
+      </div>
+      <div class="mt-2 flex gap-2">
+        <input id="spec-input" type="text" maxlength="500" placeholder="Crowd chat (Enter to send)…"
+               class="flex-1 rounded bg-neutral-900 border border-neutral-800 px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-600" />
+      </div>
+    </div>
+
+    <div>
+      <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-2">Moves</h2>
+      <ol id="move-list" class="text-sm font-mono text-neutral-200 bg-neutral-900 border border-neutral-800 rounded p-4 h-[180px] overflow-y-auto">
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+  const MATCH_ID = {{ match.id | tojson }};
+  const CHARACTER_NAME = {{ character.name | tojson }};
+  const INITIAL_FEN = {{ match.current_fen | tojson }};
+  const INITIAL_MOVES = {{ moves_json | tojson }};
+  const PARTICIPANT_USERNAME = {{ match_owner.username | tojson }};
+
+  const game = new Chess(INITIAL_FEN);
+  const EMOTION_COLORS = {
+    neutral: "text-neutral-300", pleased: "text-emerald-300", annoyed: "text-amber-400",
+    excited: "text-cyan-300", focused: "text-indigo-300", uncertain: "text-neutral-400",
+    smug: "text-purple-300", deflated: "text-rose-300",
+  };
+  function setEmotion(emotion, intensity) {
+    const el = document.getElementById('emotion-indicator');
+    if (!emotion) { el.textContent = "—"; el.className = "font-medium text-neutral-300"; return; }
+    const color = EMOTION_COLORS[emotion] || "text-neutral-300";
+    const dots = intensity >= 0.7 ? "●●●" : intensity >= 0.4 ? "●●○" : "●○○";
+    el.innerHTML = `<span class="${color}">${emotion}</span> <span class="text-neutral-600 text-[10px]">${dots}</span>`;
+  }
+  function setConnPill(state) {
+    const el = document.getElementById('conn-pill');
+    el.className = 'mt-2 inline-block rounded px-2 py-0.5 text-[10px] uppercase tracking-wider ';
+    if (state === 'live')  { el.classList.add('conn-live');  el.textContent = 'live'; }
+    else if (state === 'retry') { el.classList.add('conn-retry'); el.textContent = 'reconnecting…'; }
+    else { el.classList.add('conn-lost'); el.textContent = 'lost'; }
+  }
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  const board = Chessboard('board', {
+    draggable: false,
+    position: INITIAL_FEN,
+    orientation: 'white',
+    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+  });
+
+  function renderMoves(moves) {
+    const ol = document.getElementById('move-list');
+    ol.innerHTML = '';
+    for (const m of moves) {
+      const li = document.createElement('li');
+      li.className = 'py-0.5';
+      const side = m.side === 'white' ? 'W' : 'B';
+      const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms)` : '';
+      const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined) ? ` [${(m.eval_cp/100).toFixed(1)}]` : '';
+      li.textContent = `${m.move_number}. ${side} ${m.san}${evalStr}${timing}`;
+      ol.appendChild(li);
+    }
+    ol.scrollTop = ol.scrollHeight;
+  }
+  function appendMoveRow(m) {
+    const ol = document.getElementById('move-list');
+    const li = document.createElement('li');
+    li.className = 'py-0.5';
+    const side = m.side === 'white' ? 'W' : 'B';
+    const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms)` : '';
+    const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined) ? ` [${(m.eval_cp/100).toFixed(1)}]` : '';
+    li.textContent = `${m.move_number}. ${side} ${m.san}${evalStr}${timing}`;
+    ol.appendChild(li);
+    ol.scrollTop = ol.scrollHeight;
+  }
+  function addChatBubble(who, text, who_label) {
+    if (!text) return null;
+    const log = document.getElementById('chat-log');
+    const placeholder = log.querySelector('.italic.text-neutral-500');
+    if (placeholder && log.children.length === 1) log.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = (who === 'agent' ? 'chat-bubble-agent' : 'chat-bubble-player') + ' rounded py-2 px-3';
+    const label = who_label || (who === 'agent' ? CHARACTER_NAME : `@${PARTICIPANT_USERNAME}`);
+    div.innerHTML = `<span class="text-xs uppercase tracking-wider text-neutral-500">${escapeHtml(label)}</span>
+                     <div class="text-sm mt-0.5">${escapeHtml(text)}</div>`;
+    log.appendChild(div); log.scrollTop = log.scrollHeight;
+    return div;
+  }
+  function addSpectatorBubble(username, text, opts) {
+    const log = document.getElementById('spectator-log');
+    const placeholder = log.querySelector('.italic.text-neutral-500');
+    if (placeholder && log.children.length === 1) log.innerHTML = '';
+    const div = document.createElement('div');
+    const transit = opts && opts.inTransit ? ' in-transit' : '';
+    div.className = 'chat-bubble-spectator rounded py-2 px-3' + transit;
+    div.innerHTML = `<span class="text-xs uppercase tracking-wider text-neutral-500">@${escapeHtml(username)}</span>
+                     <div class="text-sm mt-0.5">${escapeHtml(text)}</div>`;
+    log.appendChild(div); log.scrollTop = log.scrollHeight;
+    return div;
+  }
+  function showMemoryRibbon(items) {
+    const ribbon = document.getElementById('memory-ribbon');
+    const listEl = document.getElementById('memory-ribbon-items');
+    if (!items || items.length === 0) {
+      ribbon.classList.add('fading');
+      setTimeout(() => ribbon.classList.add('hidden'), 3000);
+      return;
+    }
+    listEl.innerHTML = '';
+    ribbon.classList.remove('hidden', 'fading');
+    for (const m of items) {
+      const cachedTag = m.from_cache ? '<span class="text-[10px] text-neutral-600 ml-1">(still on mind)</span>' : '';
+      const el = document.createElement('div');
+      el.className = 'text-sm';
+      el.innerHTML = `<span class="text-neutral-400">…</span>
+        <span class="text-neutral-300">${escapeHtml(m.retrieval_reason || 'a memory stirs')}</span>${cachedTag}
+        <div class="text-neutral-400 text-xs italic pl-4 mt-1 border-l border-indigo-900/60">"${escapeHtml(m.narrative_snippet)}"</div>`;
+      listEl.appendChild(el);
+    }
+  }
+  function seedChatLogFromMoves(moves) {
+    for (const m of moves) {
+      if (m.player_chat_before) addChatBubble('player', m.player_chat_before);
+      if (m.agent_chat_after) addChatBubble('agent', m.agent_chat_after);
+    }
+  }
+
+  // --- Socket.IO (spectator role) ----------------------------------------
+
+  const socket = io('/play', {
+    transports: ['websocket', 'polling'],
+    query: { match_id: MATCH_ID },
+    reconnection: true,
+    withCredentials: true,
+  });
+
+  socket.on('connect',    () => setConnPill('live'));
+  socket.on('disconnect', () => setConnPill('lost'));
+  socket.io.on('reconnect_attempt', () => setConnPill('retry'));
+  socket.io.on('reconnect', () => setConnPill('live'));
+
+  socket.on('error', (p) => console.warn('socket error', p));
+
+  socket.on('match_state', (state) => {
+    if (state.current_fen) { game.load(state.current_fen); board.position(state.current_fen); }
+    if (state.moves && state.moves.length) renderMoves(state.moves);
+    if (state.status !== 'in_progress') {
+      document.getElementById('match-status').innerHTML = '<span class="text-amber-300">Finished</span>';
+      document.getElementById('match-result').textContent = state.result || '';
+    }
+  });
+
+  socket.on('player_move_applied', (p) => {
+    // Player's move — replay on the board for spectators.
+    try {
+      game.move({from: p.uci.slice(0,2), to: p.uci.slice(2,4),
+                 promotion: p.uci.length > 4 ? p.uci[4] : undefined});
+      board.position(game.fen());
+    } catch (_) {}
+    appendMoveRow({move_number: p.move_number, side: game.turn() === 'w' ? 'black' : 'white',
+                   san: p.san, time_taken_ms: null, eval_cp: null});
+    if (p.player_chat_before) addChatBubble('player', p.player_chat_before);
+  });
+  socket.on('agent_move', (p) => {
+    try {
+      game.move({from: p.uci.slice(0,2), to: p.uci.slice(2,4),
+                 promotion: p.uci.length > 4 ? p.uci[4] : undefined});
+      board.position(game.fen());
+    } catch (_) {}
+    appendMoveRow(p);
+  });
+  socket.on('memory_surfaced', (p) => showMemoryRibbon(p.items || []));
+  socket.on('agent_chat', (p) => {
+    if (p.speak) addChatBubble('agent', p.speak);
+    setEmotion(p.emotion, p.emotion_intensity);
+  });
+  socket.on('player_chat_broadcast', (p) => addChatBubble('player', p.text));
+  socket.on('match_ended', (p) => {
+    document.getElementById('match-status').innerHTML = '<span class="text-amber-300">Finished</span>';
+    document.getElementById('match-result').textContent = `${p.result || ''}${p.reason ? ' · ' + p.reason : ''}`;
+  });
+
+  socket.on('spectator_chat_broadcast', (p) => addSpectatorBubble(p.username, p.text));
+  socket.on('spectator_chat_echoed', (p) => {
+    const log = document.getElementById('spectator-log');
+    const tr = log.querySelector('.chat-bubble-spectator.in-transit');
+    if (tr) tr.classList.remove('in-transit');
+  });
+  socket.on('spectator_count', (p) => {
+    const el = document.getElementById('spectator-count');
+    el.textContent = `${p.count} watching`;
+  });
+  socket.on('spectator_joined', (p) => addSpectatorBubble(p.username, '— joined', {}));
+  socket.on('spectator_left',   (p) => addSpectatorBubble(p.username, '— left',   {}));
+
+  // --- Send spectator chat -----------------------------------------------
+
+  const specInput = document.getElementById('spec-input');
+  specInput.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    const text = (specInput.value || '').trim();
+    if (!text) return;
+    specInput.value = '';
+    addSpectatorBubble('{{ player.username }}', text, { inTransit: true });
+    socket.emit('spectator_chat', { text });
+  });
+
+  // --- Init --------------------------------------------------------------
+
+  renderMoves(INITIAL_MOVES);
+  seedChatLogFromMoves(INITIAL_MOVES);
+</script>
+{% endblock %}
