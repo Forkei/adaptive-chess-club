@@ -69,8 +69,26 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "GEMINI_API_KEY is not set — presets were seeded but memory generation is skipped."
         )
+
+    # Housekeeping: reap stale matches, fail stuck analyses, re-arm disconnect
+    # cooldowns that survived the restart. Runs once here, then on a timer.
+    from app.matches import housekeeping
+
+    try:
+        await housekeeping.run_startup()
+    except Exception:
+        logger.exception("Housekeeping startup sweep failed (continuing)")
+    housekeeping_task = asyncio.create_task(
+        housekeeping.periodic_loop(), name="match-housekeeping",
+    )
     yield
 
+    # Stop the periodic sweep cleanly before tearing the loop down.
+    housekeeping_task.cancel()
+    try:
+        await housekeeping_task
+    except (asyncio.CancelledError, Exception):
+        pass
     # Clear on shutdown so background threads don't try to schedule onto a dead loop.
     set_main_loop(None)
 

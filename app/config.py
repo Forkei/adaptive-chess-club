@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     # `agent_thinking.eta_seconds` hint — accounts for Soul + network.
     agent_thinking_soul_overhead_seconds: float = 1.5
 
+    # Patch Pass 1 — periodic housekeeping.
+    # Matches with status=in_progress + move_count < threshold + started_at older
+    # than this many hours are reaped to ABANDONED by the startup/periodic sweep.
+    stale_match_reaper_hours: int = 1
+    stale_match_move_threshold: int = 2
+    # MatchAnalysis rows in RUNNING older than this many minutes are marked FAILED
+    # on startup + periodic sweep — avoids zombie rows after a server crash.
+    stuck_analysis_minutes: int = 10
+    # Periodic sweep cadence (both reapers run in one coroutine).
+    housekeeping_interval_seconds: int = 300
+
     @property
     def log_path(self) -> Path:
         p = Path(self.log_dir)
