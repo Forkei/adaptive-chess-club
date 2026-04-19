@@ -118,7 +118,7 @@ def list_recent_matches(
         .join(Character, Match.character_id == Character.id)
         .join(Player, Match.player_id == Player.id)
         .where(
-            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.ABANDONED]),
+            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.RESIGNED, MatchStatus.ABANDONED]),
             Match.ended_at.is_not(None),
             *visible_character_filter(viewer),
         )

@@ -261,6 +261,55 @@ def test_processor_rage_quit_outcome_only():
         assert char.current_elo == 1520
 
 
+def test_resigned_is_not_rage_quit():
+    """A RESIGNED match runs the full Elo math (not outcome-only)
+    and hits the respectful memory-gen branch, not the rage-quit one."""
+    from app.post_match.memory_gen import _outcome_phrase, _build_memory_prompt
+
+    with SessionLocal() as s:
+        char = Character(
+            name="Polite Winner",
+            aggression=5, risk_tolerance=5, patience=5, trash_talk=5,
+            target_elo=1500, current_elo=1500, floor_elo=1400, max_elo=1800,
+            adaptive=True, state=CharacterState.READY,
+        )
+        s.add(char)
+        from app.auth import generate_guest_username
+
+        player = Player(username=generate_guest_username(), display_name="Resigner")
+        s.add(player)
+        s.commit()
+        match = Match(
+            character_id=char.id,
+            player_id=player.id,
+            player_color=Color.WHITE,
+            # Player was white; character (black) won via resign.
+            status=MatchStatus.RESIGNED,
+            result=MatchResult.BLACK_WIN,
+            initial_fen=chess.STARTING_FEN,
+            current_fen=chess.STARTING_FEN,
+            move_count=20,
+            character_elo_at_start=1500,
+        )
+        s.add(match)
+        s.commit()
+
+        # Prompt branch: respectful, not rage-quit framing.
+        phrase = _outcome_phrase(match)
+        assert "rage quit" not in phrase.lower()
+        assert "resigned" in phrase.lower()
+
+        prompt = _build_memory_prompt(
+            character=char, match=match,
+            critical_moments=[], features_before=None, features_after={},
+            opponent_notes=[], prior_memory_samples=[],
+        )
+        # Respectful branch should be present; the rage-quit instruction block
+        # ("because the player rage-quit, ...") should NOT be.
+        assert "clean concession" in prompt.lower() or "legitimate finish" in prompt.lower()
+        assert "because the player rage-quit" not in prompt.lower()
+
+
 def test_processor_handles_memory_llm_failure_gracefully():
     """Memory LLM failure → memory step fails; elo+features still succeed."""
 

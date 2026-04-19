@@ -56,7 +56,7 @@ def test_alembic_upgrade_head_on_fresh_db_is_idempotent(tmp_path, monkeypatch):
     try:
         cur = con.execute("SELECT version_num FROM alembic_version")
         version = cur.fetchone()[0]
-        assert version == "0003_phase_3c"
+        assert version == "0004_resigned_status"
     finally:
         con.close()
 

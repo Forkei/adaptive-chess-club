@@ -89,7 +89,10 @@ _NARRATIVE_ADAPTER = TypeAdapter(_NarrativeOut)
 
 def _outcome_phrase(match: Match) -> str:
     if match.status == MatchStatus.ABANDONED:
-        return "The player abandoned the match (rage quit)."
+        return "The player abandoned the match (rage quit — disconnected without coming back)."
+    if match.status == MatchStatus.RESIGNED:
+        # Character won via the player conceding — treat as a clean win, not a rage-quit.
+        return "The player resigned, handing you the win. They chose to stop rather than play on."
     if match.result == MatchResult.DRAW:
         return "The match ended in a draw."
     if match.result is None:
@@ -127,6 +130,7 @@ def _build_memory_prompt(
 ) -> str:
     frags = style_to_prompt_fragments(character)
     rage_quit = match.status == MatchStatus.ABANDONED
+    resigned = match.status == MatchStatus.RESIGNED
     outcome_line = _outcome_phrase(match)
 
     parts: list[str] = []
@@ -155,6 +159,13 @@ def _build_memory_prompt(
             "Because the player rage-quit, your memory should reflect the character's "
             "honest reaction — bitter, amused, or dismissive depending on who they are. "
             "Do not pretend it was a normal finish."
+        )
+    elif resigned:
+        parts.append(
+            "The player resigned — a clean concession, not a walk-out. Your memory should "
+            "treat this as a legitimate finish. React authentically to winning that way "
+            "(respectful, smug, bored, whatever fits the character), but don't frame them "
+            "as a rage-quitter."
         )
     parts.append("")
     if critical_moments:

@@ -235,7 +235,7 @@ def _run_pipeline(
         if match is None:
             logger.warning("Post-match: match %s not found", match_id)
             return
-        if match.status not in (MatchStatus.COMPLETED, MatchStatus.ABANDONED):
+        if match.status not in (MatchStatus.COMPLETED, MatchStatus.RESIGNED, MatchStatus.ABANDONED):
             logger.warning("Post-match: match %s not terminal (status=%s) — skipping", match_id, match.status)
             return
         analysis = _ensure_analysis_row(session, match_id)
@@ -281,6 +281,8 @@ def _run_pipeline(
             match = session.get(Match, match_id)
             profile = _get_or_create_profile(session, character_id, player_id)
             features_before = dict(profile.style_features) if profile.style_features else None
+            # `abandoned_last` means the player walked away — disconnect timeout only.
+            # A clean resign is a legitimate finish; don't flag it as abandonment.
             abandoned = match.status == MatchStatus.ABANDONED
             new_features = extract_features(
                 moves=_move_rows_to_dicts(list(match.moves)),
@@ -432,8 +434,14 @@ def _get_or_create_profile(session: Session, character_id: str, player_id: str) 
 def _bump_profile_records(profile: OpponentProfile, match: Match) -> None:
     profile.games_played = (profile.games_played or 0) + 1
     if match.status == MatchStatus.ABANDONED:
-        # Player resigned / rage quit → character won.
+        # Disconnect-timeout / rage-quit → character won.
         profile.games_won_by_character = (profile.games_won_by_character or 0) + 1
+        profile.abandoned_count = (profile.abandoned_count or 0) + 1
+        return
+    if match.status == MatchStatus.RESIGNED:
+        # Clean resign → character won.
+        profile.games_won_by_character = (profile.games_won_by_character or 0) + 1
+        profile.resigned_count = (profile.resigned_count or 0) + 1
         return
     # Determine winner from result + player_color.
     from app.models.match import MatchResult

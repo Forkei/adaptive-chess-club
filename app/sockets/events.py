@@ -100,7 +100,7 @@ class MatchStatePayload(_FrozenModel):
     """Full current state, emitted on connect and on request_state."""
 
     match_id: str
-    status: Literal["in_progress", "completed", "abandoned"]
+    status: Literal["in_progress", "completed", "resigned", "abandoned"]
     result: Literal["white_win", "black_win", "draw", "abandoned"] | None
     player_color: Literal["white", "black"]
     current_fen: str

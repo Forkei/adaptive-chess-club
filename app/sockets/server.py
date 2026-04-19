@@ -483,7 +483,7 @@ async def _on_disconnect_timeout(match_id: str) -> None:
             return
         if match.status != MatchStatus.IN_PROGRESS:
             return
-        match_service.resign(session, match_id=match_id)
+        match_service.abandon_for_disconnect(session, match_id=match_id)
         session.commit()
         session.refresh(match)
         end_payload = MatchEndedPayload(
@@ -742,6 +742,7 @@ async def _on_resign(sid, _data=None):
             match = match_service.resign(session, match_id=match_id)
             session.commit()
             session.refresh(match)
+            result_value = match.result.value  # white_win or black_win
         except match_service.GameAlreadyOver as exc:
             await _send_error(sid, "game_over", str(exc))
             return
@@ -753,7 +754,7 @@ async def _on_resign(sid, _data=None):
         S2C_MATCH_ENDED,
         MatchEndedPayload(
             match_id=match_id,
-            result="abandoned",
+            result=result_value,  # type: ignore[arg-type]
             reason="resign",
             player_outcome="resigned",
         ).model_dump(mode="json"),

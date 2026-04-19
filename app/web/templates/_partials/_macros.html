@@ -36,8 +36,10 @@
 {% macro result_chip(m) -%}
   {% if m.status == 'in_progress' %}
     <span class="mp-chip" style="background: rgba(79,164,141,0.12); color: var(--mp-felt-bright);"><span class="mp-livedot"></span>Live</span>
-  {% elif m.status == 'abandoned' %}
+  {% elif m.status == 'resigned' %}
     <span class="mp-chip" style="background: var(--mp-surface-3); color: var(--mp-ink-faint); border-color: var(--mp-hairline-2);">Resigned</span>
+  {% elif m.status == 'abandoned' %}
+    <span class="mp-chip" style="background: var(--mp-surface-3); color: var(--mp-ink-faint); border-color: var(--mp-hairline-2);">Abandoned</span>
   {% elif m.result == 'draw' %}
     <span class="mp-chip" style="background: rgba(88,121,163,0.14); color: var(--mp-ink-blue-alt);">Draw</span>
   {% elif m.result == 'white_win' %}

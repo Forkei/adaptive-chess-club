@@ -27,7 +27,7 @@
       <div class="flex-1 min-w-0">
         <div class="mp-display text-[17px] truncate">{{ character.name }}</div>
         <div class="text-[11px] mp-mono uppercase tracking-[0.1em] text-[var(--mp-ink-faint)] mt-1">
-          {% if match.status.value == 'abandoned' %}resigned{% elif match.result %}{{ match.result.value }}{% endif %}
+          {% if match.status.value == 'resigned' %}resigned{% elif match.status.value == 'abandoned' %}abandoned{% elif match.result %}{{ match.result.value }}{% endif %}
           {% if match.ended_at %}<span class="text-[var(--mp-ink-ghost)]"> · </span>{{ match.ended_at.strftime('%Y-%m-%d') }}{% endif %}
         </div>
       </div>

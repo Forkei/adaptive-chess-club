@@ -563,6 +563,28 @@ async def apply_player_move(
 
 
 def resign(session: Session, *, match_id: str) -> Match:
+    """Clean concession: match ends RESIGNED, character wins on the actual board side.
+
+    Distinct from disconnect-timeout (which uses `abandon_for_disconnect`):
+    - RESIGNED: player chose to end it; full Elo + memory pipelines run normally.
+    - ABANDONED: player never came back; rage-quit branch runs.
+    """
+    match = get_match(session, match_id)
+    if match.status != MatchStatus.IN_PROGRESS:
+        raise GameAlreadyOver(match.status.value)
+    match.status = MatchStatus.RESIGNED
+    # Character wins the side opposite the resigning player.
+    match.result = (
+        MatchResult.BLACK_WIN if match.player_color == Color.WHITE else MatchResult.WHITE_WIN
+    )
+    match.ended_at = datetime.utcnow()
+    match.character_elo_at_end = match.character_elo_at_start
+    session.flush()
+    return match
+
+
+def abandon_for_disconnect(session: Session, *, match_id: str) -> Match:
+    """Disconnect-timeout path: match ends ABANDONED (rage-quit semantics)."""
     match = get_match(session, match_id)
     if match.status != MatchStatus.IN_PROGRESS:
         raise GameAlreadyOver(match.status.value)
@@ -580,10 +602,10 @@ def resign(session: Session, *, match_id: str) -> Match:
 def player_outcome(match: Match) -> str | None:
     if match.status == MatchStatus.IN_PROGRESS:
         return None
+    if match.status in (MatchStatus.RESIGNED, MatchStatus.ABANDONED):
+        return "resigned"
     if match.result == MatchResult.DRAW:
         return "draw"
-    if match.result == MatchResult.ABANDONED:
-        return "resigned"
     player_side = match.player_color
     winning_side = Color.WHITE if match.result == MatchResult.WHITE_WIN else Color.BLACK
     return "win" if player_side == winning_side else "loss"

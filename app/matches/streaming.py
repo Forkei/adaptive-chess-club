@@ -111,9 +111,12 @@ def _finalize_outcome(match: Match, board: chess.Board) -> tuple[str, str, str |
     Does NOT commit. Caller owns the session.
     """
     if match.status != MatchStatus.IN_PROGRESS:
-        # Already abandoned / resigned.
+        # Already ended via resign or disconnect-timeout.
+        if match.status == MatchStatus.RESIGNED:
+            result_value = match.result.value if match.result else "abandoned"
+            return "resign", result_value, "resigned"
         if match.status == MatchStatus.ABANDONED:
-            return "resign", "abandoned", "resigned"
+            return "disconnect_timeout", "abandoned", "resigned"
         return None
 
     outcome = board.outcome(claim_draw=True)

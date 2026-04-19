@@ -49,7 +49,7 @@ def hall_of_fame_for_character(
         .join(Match, Match.player_id == Player.id)
         .where(
             Match.character_id == character_id,
-            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.ABANDONED]),
+            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.RESIGNED, MatchStatus.ABANDONED]),
             Player.username != "legacy_system",
         )
         .group_by(Player.id, Player.username, Player.display_name)

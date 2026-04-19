@@ -6,7 +6,9 @@ Per spec (Phase 2b):
   Sum character total + opponent total. Delta = clamp((opp - char) / 10, -100, 100).
 - elo_delta_raw = outcome_delta + move_quality_delta
 - If match length < 10 half-moves: halve raw before the multiplier.
-- If match.status == abandoned: use outcome_delta only, skip move_quality.
+- If match.status == abandoned (disconnect-timeout / rage-quit):
+  use outcome_delta only, skip move_quality. A RESIGNED match runs the
+  normal move_quality math — the player chose to end, not walk away.
 - apply_elo_ratchet then clamps with ±30 and ±10% gain; floor ratchet if
   current > floor+100 for last 3 matches.
 """
@@ -76,11 +78,10 @@ def compute_elo_delta(
     else:
         won = _character_won(match)
         if won is None:
-            # Abandoned or unknown — treat abandoned as character loss only if
-            # the player resigned. Our resign path sets result=ABANDONED and
-            # the player is the one resigning, so character wins.
+            # ABANDONED status (disconnect-timeout) sets result=MatchResult.ABANDONED.
+            # RESIGNED status sets result=WHITE_WIN/BLACK_WIN so it goes through the
+            # `won` branch normally. Both paths score the character as winning.
             if match.result == MatchResult.ABANDONED:
-                # Player resigned: character won.
                 outcome = 200.0
             else:
                 outcome = 0.0

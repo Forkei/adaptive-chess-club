@@ -33,6 +33,11 @@ GUEST_USERNAME_PREFIX = "guest_"
 class MatchStatus(str, enum.Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    # Player clicked Resign — clean concession, character wins. result is set to the
+    # actual winning side (WHITE_WIN/BLACK_WIN), not MatchResult.ABANDONED.
+    RESIGNED = "resigned"
+    # Player disconnected past the cooldown — treated as rage-quit. result stays
+    # MatchResult.ABANDONED so downstream (Elo, memory_gen) can branch on it.
     ABANDONED = "abandoned"
 
 
@@ -95,7 +100,11 @@ class Match(Base):
     )
 
     status: Mapped[MatchStatus] = mapped_column(
-        Enum(MatchStatus, name="match_status"),
+        Enum(
+            MatchStatus,
+            name="match_status",
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
         nullable=False,
         default=MatchStatus.IN_PROGRESS,
         index=True,
@@ -186,6 +195,10 @@ class OpponentProfile(Base):
     games_won_by_character: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     games_lost_by_character: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     games_drawn: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Both resign + disconnect count toward games_won_by_character (character wins).
+    # These columns track WHY those wins happened for future narrative/UI use.
+    resigned_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    abandoned_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     # Per-player chess style summary, e.g. aggression_index, blunder_rate, typical_opening_eco.
     style_features: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)

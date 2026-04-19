@@ -111,7 +111,7 @@ def _char_win_expr() -> tuple:
 def _window_clauses(window: LeaderboardWindow) -> list:
     cutoff = window_cutoff(window)
     clauses = [
-        Match.status.in_([MatchStatus.COMPLETED, MatchStatus.ABANDONED]),
+        Match.status.in_([MatchStatus.COMPLETED, MatchStatus.RESIGNED, MatchStatus.ABANDONED]),
         Match.ended_at.is_not(None),
     ]
     if cutoff is not None:

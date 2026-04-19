@@ -219,8 +219,35 @@ def test_resign_ends_match(_force_mock_only):
             return match
 
     match = asyncio.run(_run())
-    assert match.status == MatchStatus.ABANDONED
+    # Resign is a clean concession — RESIGNED, not ABANDONED. Character wins
+    # on the opposite side from the resigning player.
+    assert match.status == MatchStatus.RESIGNED
     assert match.ended_at is not None
+    assert match.result is not None
+    # Player was white, so character (black) wins.
+    assert match.result.value == "black_win"
+
+
+def test_abandon_for_disconnect_ends_match():
+    """Disconnect-timeout path sets ABANDONED status (rage-quit bucket)."""
+    import asyncio as _asyncio
+
+    async def _run():
+        with SessionLocal() as s:
+            char = _character(s)
+            player = _player(s)
+            match = service.create_match(
+                s, character_id=char.id, player_id=player.id, player_color="white"
+            )
+            s.commit()
+            match_id = match.id
+        with SessionLocal() as s:
+            match = service.abandon_for_disconnect(s, match_id=match_id)
+            s.commit()
+            return match
+
+    match = _asyncio.run(_run())
+    assert match.status == MatchStatus.ABANDONED
     assert match.result is not None
     assert match.result.value == "abandoned"
 
