@@ -2,54 +2,66 @@
 {% block title %}Character Leaderboard — Metropolis Chess Club{% endblock %}
 
 {% block content %}
-<div class="flex items-end justify-between mb-6">
+<div class="flex items-end justify-between mb-8 mp-enter mp-enter-1">
   <div>
-    <h1 class="text-2xl font-semibold">Character leaderboard</h1>
-    <p class="text-sm text-neutral-400">Ranked by win rate against all players. Minimum 5 matches within the window.</p>
+    <div class="mp-eyebrow mb-2">Standings · House</div>
+    <h1 class="mp-display text-[40px] leading-[1] tracking-tight">Character leaderboard</h1>
+    <p class="text-[13px] text-[var(--mp-ink-muted)] mt-3 max-w-lg">
+      Ranked by win rate against all players. Minimum 5 matches within the selected window.
+    </p>
   </div>
-  <div class="flex items-center gap-4 text-sm">
-    <a href="/leaderboard/characters" class="font-medium {% if window == 'all' %}text-white{% else %}text-neutral-500 hover:text-white{% endif %}">All time</a>
-    <a href="/leaderboard/characters?window=30d" class="font-medium {% if window == '30d' %}text-white{% else %}text-neutral-500 hover:text-white{% endif %}">30 days</a>
-    <a href="/leaderboard/characters?window=7d" class="font-medium {% if window == '7d' %}text-white{% else %}text-neutral-500 hover:text-white{% endif %}">7 days</a>
-    <span class="text-neutral-700">|</span>
-    <a href="/leaderboard/players" class="text-neutral-400 hover:text-white">Players →</a>
-  </div>
+  <nav class="flex items-center gap-2 text-[11px] mp-mono uppercase tracking-[0.15em] shrink-0">
+    <a href="/leaderboard/characters" class="px-3 py-1 border-b border-transparent
+       {% if window == 'all' %}text-[var(--mp-brass)] border-[var(--mp-brass)]{% else %}text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink)]{% endif %}">All time</a>
+    <a href="/leaderboard/characters?window=30d" class="px-3 py-1 border-b border-transparent
+       {% if window == '30d' %}text-[var(--mp-brass)] border-[var(--mp-brass)]{% else %}text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink)]{% endif %}">30 days</a>
+    <a href="/leaderboard/characters?window=7d" class="px-3 py-1 border-b border-transparent
+       {% if window == '7d' %}text-[var(--mp-brass)] border-[var(--mp-brass)]{% else %}text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink)]{% endif %}">7 days</a>
+    <span class="mx-2 text-[var(--mp-ink-ghost)]">·</span>
+    <a href="/leaderboard/players" class="text-[var(--mp-ink-muted)] hover:text-[var(--mp-ink)]">Players ›</a>
+  </nav>
 </div>
 
-<div class="rounded-xl border border-neutral-800 bg-neutral-900 overflow-hidden">
+<div class="mp-brass-rule mb-6 mp-enter mp-enter-2"></div>
+
+<div class="mp-panel rounded-sm overflow-hidden mp-framed mp-enter mp-enter-2">
+  <span class="mp-frame-tl"></span><span class="mp-frame-br"></span>
   <table class="w-full text-sm">
-    <thead class="bg-neutral-950/60 text-[11px] uppercase tracking-wider text-neutral-500">
-      <tr>
-        <th class="text-left font-medium px-4 py-2 w-12">#</th>
-        <th class="text-left font-medium px-4 py-2">Character</th>
-        <th class="text-right font-medium px-4 py-2">Elo</th>
-        <th class="text-right font-medium px-4 py-2">Win %</th>
-        <th class="text-right font-medium px-4 py-2">W</th>
-        <th class="text-right font-medium px-4 py-2">L</th>
-        <th class="text-right font-medium px-4 py-2">D</th>
-        <th class="text-right font-medium px-4 py-2">Total</th>
+    <thead>
+      <tr class="text-left" style="background: var(--mp-surface-2); border-bottom: 1px solid var(--mp-hairline-2);">
+        <th class="mp-eyebrow text-left px-4 py-3 w-12">#</th>
+        <th class="mp-eyebrow text-left px-4 py-3">Character</th>
+        <th class="mp-eyebrow text-right px-4 py-3">Elo</th>
+        <th class="mp-eyebrow text-right px-4 py-3">Win %</th>
+        <th class="mp-eyebrow text-right px-4 py-3">W</th>
+        <th class="mp-eyebrow text-right px-4 py-3">L</th>
+        <th class="mp-eyebrow text-right px-4 py-3">D</th>
+        <th class="mp-eyebrow text-right px-4 py-3">Total</th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-neutral-800">
+    <tbody>
       {% for r in rows %}
-      <tr class="hover:bg-neutral-800/40 transition">
-        <td class="px-4 py-3 text-neutral-400 font-mono">{{ r.rank }}</td>
+      <tr class="transition hover:bg-[var(--mp-surface-3)]" style="border-top: 1px solid var(--mp-hairline);">
+        <td class="px-4 py-3 mp-mono text-[var(--mp-ink-faint)]">
+          <span class="mp-display {% if r.rank <= 3 %}text-[var(--mp-brass-bright)]{% endif %}">{{ r.rank }}</span>
+        </td>
         <td class="px-4 py-3">
-          <a href="/characters/{{ r.character_id }}" class="flex items-center gap-3 hover:text-white">
-            <span class="text-xl">{{ r.character_avatar }}</span>
-            <span class="font-medium">{{ r.character_name }}</span>
+          <a href="/characters/{{ r.character_id }}" class="flex items-center gap-3 hover:text-[var(--mp-brass-bright)] transition">
+            <span class="w-9 h-9 inline-flex items-center justify-center border border-[var(--mp-hairline-2)] bg-[var(--mp-surface-2)] rounded-sm text-lg">{{ r.character_avatar }}</span>
+            <span class="mp-display text-[16px]">{{ r.character_name }}</span>
           </a>
         </td>
-        <td class="px-4 py-3 text-right font-mono text-neutral-300">{{ r.current_elo }}</td>
-        <td class="px-4 py-3 text-right font-mono font-semibold text-emerald-300">{{ "%.1f"|format(r.win_rate * 100) }}%</td>
-        <td class="px-4 py-3 text-right font-mono text-emerald-400">{{ r.wins }}</td>
-        <td class="px-4 py-3 text-right font-mono text-rose-400">{{ r.losses }}</td>
-        <td class="px-4 py-3 text-right font-mono text-neutral-400">{{ r.draws }}</td>
-        <td class="px-4 py-3 text-right font-mono text-neutral-300">{{ r.total_matches }}</td>
+        <td class="px-4 py-3 text-right mp-mono text-[var(--mp-ink-muted)]">{{ r.current_elo }}</td>
+        <td class="px-4 py-3 text-right mp-mono font-semibold" style="color: var(--mp-felt-bright);">{{ "%.1f"|format(r.win_rate * 100) }}%</td>
+        <td class="px-4 py-3 text-right mp-mono" style="color: var(--mp-felt-bright);">{{ r.wins }}</td>
+        <td class="px-4 py-3 text-right mp-mono" style="color: #E79E9B;">{{ r.losses }}</td>
+        <td class="px-4 py-3 text-right mp-mono text-[var(--mp-ink-faint)]">{{ r.draws }}</td>
+        <td class="px-4 py-3 text-right mp-mono text-[var(--mp-ink-muted)]">{{ r.total_matches }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="px-4 py-12 text-center text-neutral-500">
-        No characters have reached 5 matches in this window yet.
+      <tr><td colspan="8" class="px-4 py-14 text-center">
+        <div class="mp-display italic text-[var(--mp-ink-faint)] text-lg">The standings are quiet.</div>
+        <div class="text-[12px] text-[var(--mp-ink-faint)] mt-1">No characters have reached 5 matches in this window yet.</div>
       </td></tr>
       {% endfor %}
     </tbody>

@@ -1,23 +1,30 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="flex items-end justify-between mb-6">
+<div class="flex items-end justify-between mb-10 mp-enter mp-enter-1">
   <div>
-    <h1 class="text-2xl font-semibold">Characters</h1>
-    <p class="text-sm text-neutral-400">Pick one to inspect, or create your own opponent.</p>
+    <div class="mp-eyebrow mb-2">Members' roster</div>
+    <h1 class="mp-display text-[44px] leading-[0.95] tracking-tight">Characters</h1>
+    <p class="text-[14px] text-[var(--mp-ink-muted)] mt-3 max-w-md">
+      Pick one to inspect, or create your own opponent. Each has a backstory, a voice,
+      and a running Elo — they remember what happened last time.
+    </p>
   </div>
-  <a href="/discovery"
-     class="text-sm rounded-lg border border-indigo-700/70 bg-indigo-950/30 hover:bg-indigo-900/40 text-indigo-200 px-3 py-2 font-medium">
-    Browse live matches →
+  <a href="/discovery" class="mp-btn mp-btn-ghost shrink-0">
+    Browse live matches
+    <span class="text-[var(--mp-brass)]">›</span>
   </a>
 </div>
 
-<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+<div class="mp-brass-rule mb-6 mp-enter mp-enter-2"></div>
+
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mp-enter mp-enter-3">
   {% for c in characters %}
     {% include "_partials/character_card.html" %}
   {% else %}
-  <div class="col-span-full text-center py-12 text-neutral-500">
-    No characters yet. <a href="/characters/new" class="text-emerald-400 hover:underline">Create one.</a>
+  <div class="col-span-full text-center py-16 text-[var(--mp-ink-faint)]">
+    <div class="mp-display text-2xl italic mb-3">An empty roster.</div>
+    <a href="/characters/new" class="text-[var(--mp-brass)] hover:text-[var(--mp-brass-bright)]">Draft the first character →</a>
   </div>
   {% endfor %}
 </div>

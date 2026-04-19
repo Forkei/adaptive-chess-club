@@ -9,75 +9,61 @@
 {% endblock %}
 
 {% block content %}
-{% macro rating_badge(r) %}
-  {% set val = r.value if r.value is defined else r %}
-  {% if val == 'family' %}
-    <span class="text-[10px] uppercase tracking-wider bg-emerald-900/60 text-emerald-200 rounded px-1.5 py-0.5">Family</span>
-  {% elif val == 'mature' %}
-    <span class="text-[10px] uppercase tracking-wider bg-amber-900/60 text-amber-200 rounded px-1.5 py-0.5">Mature</span>
-  {% elif val == 'unrestricted' %}
-    <span class="text-[10px] uppercase tracking-wider bg-rose-900/60 text-rose-200 rounded px-1.5 py-0.5">Unrestricted</span>
-  {% endif %}
-{% endmacro %}
+{% from "_partials/_macros.html" import rating_badge, visibility_badge, preset_badge, character_state_badge %}
 
-<div class="flex items-start gap-6">
-  <div class="text-6xl">{{ character.avatar_emoji or "♟" }}</div>
-  <div class="flex-1">
-    <div class="flex items-center gap-3 flex-wrap">
-      <h1 class="text-3xl font-semibold">{{ character.name }}</h1>
-      {% if character.is_preset %}
-      <span class="text-[10px] uppercase tracking-wider bg-neutral-800 text-neutral-300 rounded px-1.5 py-0.5">Preset</span>
-      {% endif %}
-      {{ rating_badge(character.content_rating) }}
-      {% if character.visibility.value == 'private' %}
-      <span class="text-[10px] uppercase tracking-wider bg-neutral-700 text-neutral-200 rounded px-1.5 py-0.5">Private</span>
-      {% endif %}
-      {% if is_generating %}
-      <span class="text-xs bg-amber-900/60 text-amber-200 rounded px-2 py-0.5 animate-pulse">Generating memories…</span>
-      {% elif is_failed %}
-      <span class="text-xs bg-rose-900/60 text-rose-200 rounded px-2 py-0.5">Generation failed</span>
-      {% else %}
-      <span class="text-xs bg-emerald-900/60 text-emerald-200 rounded px-2 py-0.5">Ready</span>
-      {% endif %}
-    </div>
-    <p class="text-neutral-300 mt-1">{{ character.short_description }}</p>
-    <div class="mt-1 text-xs text-neutral-500">
-      {% if character.is_preset %}
-        System character
-      {% elif is_owner %}
-        Your character
-      {% elif owner_username %}
-        @{{ owner_username }}'s character
-      {% endif %}
-    </div>
-    <div class="mt-3 text-sm text-neutral-400">
-      <span>Current {{ character.current_elo }} / floor {{ character.floor_elo }} / max {{ character.max_elo }} Elo</span>
-      {% if character.adaptive %} · <span>adaptive</span>{% endif %}
-      {% if character.voice_descriptor %} · <span class="italic">{{ character.voice_descriptor }}</span>{% endif %}
-    </div>
+<div class="flex items-start gap-6 mp-enter mp-enter-1">
+  <div class="shrink-0 w-20 h-20 flex items-center justify-center border border-[var(--mp-brass-dim)] bg-[var(--mp-surface-2)] rounded-sm text-5xl leading-none">
+    {{ character.avatar_emoji or "♟" }}
   </div>
-  <div class="flex flex-col gap-2 items-end">
+  <div class="flex-1">
+    <div class="mp-eyebrow mb-2">Character dossier</div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <h1 class="mp-display text-[36px] leading-[1] tracking-tight">{{ character.name }}</h1>
+      {% if character.is_preset %}{{ preset_badge() }}{% endif %}
+      {{ rating_badge(character.content_rating) }}
+      {{ visibility_badge(character.visibility) }}
+      {% if is_generating %}
+        <span class="mp-chip" style="background: rgba(201,166,107,0.14); color: var(--mp-brass-bright);"><span class="mp-livedot" style="background: var(--mp-brass-bright); box-shadow: 0 0 0 0 rgba(201,166,107,0.55);"></span>Generating</span>
+      {% elif is_failed %}
+        <span class="mp-chip" style="background: rgba(168,66,63,0.2); color: #E79E9B;">Generation failed</span>
+      {% endif %}
+    </div>
+    <p class="text-[14px] text-[var(--mp-ink-muted)] mt-2">{{ character.short_description }}</p>
+    <div class="mt-2 text-[11px] text-[var(--mp-ink-faint)] mp-mono uppercase tracking-[0.12em]">
+      {% if character.is_preset %}House character
+      {% elif is_owner %}Your character
+      {% elif owner_username %}@{{ owner_username }}'s character
+      {% endif %}
+    </div>
+    <div class="mt-4 text-[12px] text-[var(--mp-ink-muted)] mp-mono">
+      <span class="text-[var(--mp-ink-faint)]">Current</span> {{ character.current_elo }}
+      <span class="text-[var(--mp-ink-ghost)] mx-1">·</span>
+      <span class="text-[var(--mp-ink-faint)]">floor</span> {{ character.floor_elo }}
+      <span class="text-[var(--mp-ink-ghost)] mx-1">·</span>
+      <span class="text-[var(--mp-ink-faint)]">max</span> {{ character.max_elo }}
+      {% if character.adaptive %}<span class="text-[var(--mp-ink-ghost)] mx-1">·</span><span style="color: var(--mp-felt-bright);">adaptive</span>{% endif %}
+    </div>
+    {% if character.voice_descriptor %}
+    <div class="mt-2 text-[13px] mp-display italic text-[var(--mp-ink-muted)]">"{{ character.voice_descriptor }}"</div>
+    {% endif %}
+  </div>
+  <div class="flex flex-col gap-2 items-end shrink-0">
     {% if not is_generating %}
     <form method="post" action="/play/{{ character.id }}">
-      <button class="rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
-        ▶ Play
-      </button>
+      <button class="mp-btn mp-btn-brass" style="padding: 0.65rem 1.4rem; font-size: 14px;">▶ Play</button>
     </form>
     {% endif %}
     {% if is_owner and not character.is_preset %}
-    <div class="flex gap-2 text-xs">
-      <a href="/characters/{{ character.id }}/edit"
-         class="rounded border border-neutral-700 text-neutral-200 px-3 py-1 hover:bg-neutral-800">Edit</a>
+    <div class="flex gap-2">
+      <a href="/characters/{{ character.id }}/edit" class="mp-btn mp-btn-ghost">Edit</a>
       <form method="post" action="/characters/{{ character.id }}/delete"
             onsubmit="return confirm('Delete {{ character.name }}? This is a soft delete.');">
-        <button class="rounded border border-rose-800 text-rose-300 px-3 py-1 hover:bg-rose-950">Delete</button>
+        <button class="mp-btn mp-btn-danger">Delete</button>
       </form>
     </div>
     {% elif not is_owner %}
     <form method="post" action="/characters/{{ character.id }}/clone">
-      <button class="text-xs rounded border border-neutral-700 text-neutral-200 px-3 py-1 hover:bg-neutral-800">
-        Clone
-      </button>
+      <button class="mp-btn mp-btn-ghost">Clone</button>
     </form>
     {% endif %}
   </div>
