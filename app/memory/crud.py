@@ -66,6 +66,7 @@ def bulk_create(
                 len(rows),
                 character_id,
                 exc,
+                exc_info=True,
             )
 
     return rows
