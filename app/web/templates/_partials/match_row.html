@@ -1,0 +1,28 @@
+{# One row on the live / recent matches list. Expects `m` (MatchSummaryOut). #}
+{% from "_partials/_macros.html" import result_chip %}
+{% set href = '/matches/' + m.match_id + '/watch' if m.status == 'in_progress' else '/matches/' + m.match_id + '/summary' %}
+<a href="{{ href }}"
+   class="flex items-center gap-4 rounded-lg border border-neutral-800 bg-neutral-900 hover:border-neutral-600 hover:bg-neutral-800/60 transition px-4 py-3">
+  <div class="text-2xl">{{ m.character_avatar }}</div>
+  <div class="flex-1 min-w-0">
+    <div class="flex items-center gap-2">
+      <div class="font-medium truncate">{{ m.character_name }}</div>
+      {{ result_chip(m) }}
+    </div>
+    <div class="text-xs text-neutral-500 truncate">
+      vs. @{{ m.player_username }} · move {{ m.move_count }}
+      {% if m.status == 'in_progress' %}
+        · started {{ m.started_at.strftime('%H:%M') }}
+      {% elif m.ended_at %}
+        · ended {{ m.ended_at.strftime('%Y-%m-%d %H:%M') }}
+      {% endif %}
+    </div>
+  </div>
+  <div class="text-xs text-neutral-500">
+    {% if m.status == 'in_progress' %}
+      <span class="text-emerald-300">Watch →</span>
+    {% else %}
+      <span class="text-neutral-400">Summary →</span>
+    {% endif %}
+  </div>
+</a>

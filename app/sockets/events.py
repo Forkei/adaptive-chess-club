@@ -33,6 +33,9 @@ C2S_RESIGN = "resign"
 C2S_PING = "ping"
 C2S_REQUEST_STATE = "request_state"  # optional — state is also emitted on connect
 
+# Phase 3c: spectators have their own chat channel that never reaches the Subconscious.
+C2S_SPECTATOR_CHAT = "spectator_chat"
+
 
 class MakeMoveEvent(BaseModel):
     uci: str = Field(..., min_length=4, max_length=6)
@@ -40,6 +43,10 @@ class MakeMoveEvent(BaseModel):
 
 
 class PlayerChatEvent(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500)
+
+
+class SpectatorChatEvent(BaseModel):
     text: str = Field(..., min_length=1, max_length=500)
 
 
@@ -61,6 +68,15 @@ S2C_MATCH_PAUSED = "match_paused"
 S2C_PLAYER_CHAT_ECHOED = "player_chat_echoed"
 S2C_PLAYER_CHAT_RATE_LIMITED = "player_chat_rate_limited"
 S2C_ERROR = "error"
+
+# Phase 3c: spectator-oriented events.
+S2C_SPECTATOR_CHAT_BROADCAST = "spectator_chat_broadcast"
+S2C_SPECTATOR_CHAT_ECHOED = "spectator_chat_echoed"
+S2C_SPECTATOR_CHAT_REJECTED = "spectator_chat_rejected"
+S2C_PLAYER_CHAT_BROADCAST = "player_chat_broadcast"
+S2C_SPECTATOR_JOINED = "spectator_joined"
+S2C_SPECTATOR_LEFT = "spectator_left"
+S2C_SPECTATOR_COUNT = "spectator_count"
 
 
 class _FrozenModel(BaseModel):
@@ -198,6 +214,37 @@ class ErrorPayload(_FrozenModel):
     message: str
 
 
+# --- Phase 3c spectator payloads ------------------------------------------
+
+
+class SpectatorChatBroadcastPayload(_FrozenModel):
+    username: str
+    text: str
+    timestamp: datetime
+
+
+class PlayerChatBroadcastPayload(_FrozenModel):
+    username: str
+    text: str
+    timestamp: datetime
+
+
+class SpectatorJoinedPayload(_FrozenModel):
+    username: str
+
+
+class SpectatorLeftPayload(_FrozenModel):
+    username: str
+
+
+class SpectatorCountPayload(_FrozenModel):
+    count: int
+
+
+class SpectatorChatRejectedPayload(_FrozenModel):
+    reason: str = "participants_cannot_use_spectator_chat"
+
+
 __all__ = [
     "NAMESPACE",
     "match_room_name",
@@ -207,8 +254,10 @@ __all__ = [
     "C2S_RESIGN",
     "C2S_PING",
     "C2S_REQUEST_STATE",
+    "C2S_SPECTATOR_CHAT",
     "MakeMoveEvent",
     "PlayerChatEvent",
+    "SpectatorChatEvent",
     # server -> client names
     "S2C_MATCH_STATE",
     "S2C_PLAYER_MOVE_APPLIED",
@@ -226,6 +275,13 @@ __all__ = [
     "S2C_PLAYER_CHAT_ECHOED",
     "S2C_PLAYER_CHAT_RATE_LIMITED",
     "S2C_ERROR",
+    "S2C_SPECTATOR_CHAT_BROADCAST",
+    "S2C_SPECTATOR_CHAT_ECHOED",
+    "S2C_SPECTATOR_CHAT_REJECTED",
+    "S2C_PLAYER_CHAT_BROADCAST",
+    "S2C_SPECTATOR_JOINED",
+    "S2C_SPECTATOR_LEFT",
+    "S2C_SPECTATOR_COUNT",
     # server -> client payloads
     "MoveSnapshot",
     "MatchStatePayload",
@@ -246,4 +302,10 @@ __all__ = [
     "PlayerChatEchoedPayload",
     "PlayerChatRateLimitedPayload",
     "ErrorPayload",
+    "SpectatorChatBroadcastPayload",
+    "PlayerChatBroadcastPayload",
+    "SpectatorJoinedPayload",
+    "SpectatorLeftPayload",
+    "SpectatorCountPayload",
+    "SpectatorChatRejectedPayload",
 ]

@@ -1,0 +1,48 @@
+{# Phase 3c: shared Jinja macros re-used across the character grid,
+   discovery page, leaderboards, and summary views. #}
+
+{% macro rating_badge(r) -%}
+  {% set val = r.value if r.value is defined else r %}
+  {% if val == 'family' %}
+    <span class="text-[10px] uppercase tracking-wider bg-emerald-900/60 text-emerald-200 rounded px-1.5 py-0.5">Family</span>
+  {% elif val == 'mature' %}
+    <span class="text-[10px] uppercase tracking-wider bg-amber-900/60 text-amber-200 rounded px-1.5 py-0.5">Mature</span>
+  {% elif val == 'unrestricted' %}
+    <span class="text-[10px] uppercase tracking-wider bg-rose-900/60 text-rose-200 rounded px-1.5 py-0.5">Unrestricted</span>
+  {% endif %}
+{%- endmacro %}
+
+{% macro character_state_badge(s) -%}
+  {% set val = s.value if s.value is defined else s %}
+  {% if val == 'generating_memories' %}
+    <span class="text-[10px] uppercase tracking-wider bg-amber-900/60 text-amber-200 rounded px-1.5 py-0.5">Generating…</span>
+  {% elif val == 'generation_failed' %}
+    <span class="text-[10px] uppercase tracking-wider bg-rose-900/60 text-rose-200 rounded px-1.5 py-0.5">Failed</span>
+  {% else %}
+    <span class="text-[10px] uppercase tracking-wider bg-emerald-900/60 text-emerald-200 rounded px-1.5 py-0.5">Ready</span>
+  {% endif %}
+{%- endmacro %}
+
+{% macro visibility_badge(v) -%}
+  {% set val = v.value if v.value is defined else v %}
+  {% if val == 'private' %}
+    <span class="text-[10px] uppercase tracking-wider bg-neutral-700 text-neutral-200 rounded px-1.5 py-0.5">Private</span>
+  {% endif %}
+{%- endmacro %}
+
+{% macro result_chip(m) -%}
+  {# m is a MatchSummaryOut-ish thing: has .status and .result #}
+  {% if m.status == 'in_progress' %}
+    <span class="text-[10px] uppercase tracking-wider bg-emerald-900/60 text-emerald-200 rounded px-1.5 py-0.5">Live</span>
+  {% elif m.status == 'abandoned' %}
+    <span class="text-[10px] uppercase tracking-wider bg-neutral-800 text-neutral-400 rounded px-1.5 py-0.5">Resigned</span>
+  {% elif m.result == 'draw' %}
+    <span class="text-[10px] uppercase tracking-wider bg-sky-900/60 text-sky-200 rounded px-1.5 py-0.5">Draw</span>
+  {% elif m.result == 'white_win' %}
+    <span class="text-[10px] uppercase tracking-wider bg-indigo-900/60 text-indigo-200 rounded px-1.5 py-0.5">White</span>
+  {% elif m.result == 'black_win' %}
+    <span class="text-[10px] uppercase tracking-wider bg-indigo-900/60 text-indigo-200 rounded px-1.5 py-0.5">Black</span>
+  {% else %}
+    <span class="text-[10px] uppercase tracking-wider bg-neutral-800 text-neutral-400 rounded px-1.5 py-0.5">—</span>
+  {% endif %}
+{%- endmacro %}

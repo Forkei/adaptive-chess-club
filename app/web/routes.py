@@ -34,6 +34,13 @@ from app.auth import (
 from app.characters.openings import OPENINGS
 from app.characters.style import style_to_prompt_fragments
 from app.db import get_session
+from app.discovery import (
+    character_leaderboard,
+    hall_of_fame_for_character,
+    list_live_matches,
+    list_recent_matches,
+    player_leaderboard,
+)
 from app.engine import EngineUnavailable, available_engines
 from app.matches import service as match_service
 from app.memory.crud import counts_by_scope, counts_by_type, list_for_character
@@ -116,6 +123,132 @@ def index(
         request,
         "index.html",
         {"player": player, "characters": chars, "owner_map": owner_map},
+    )
+
+
+# ------------------------------ Discovery ------------------------------
+
+
+@router.get("/leaderboard/characters", response_class=HTMLResponse)
+def leaderboard_characters_page(
+    request: Request,
+    window: str = "all",
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    if window not in ("all", "30d", "7d"):
+        window = "all"
+    rows = character_leaderboard(session, viewer=player, window=window)
+    return templates.TemplateResponse(
+        request,
+        "leaderboard_characters.html",
+        {"player": player, "rows": rows, "window": window},
+    )
+
+
+@router.get("/leaderboard/players", response_class=HTMLResponse)
+def leaderboard_players_page(
+    request: Request,
+    window: str = "all",
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    if window not in ("all", "30d", "7d"):
+        window = "all"
+    rows = player_leaderboard(session, viewer=player, window=window)
+    return templates.TemplateResponse(
+        request,
+        "leaderboard_players.html",
+        {"player": player, "rows": rows, "window": window},
+    )
+
+
+@router.get("/players/{username}", response_class=HTMLResponse)
+def player_profile_page(
+    request: Request,
+    username: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    target = find_player_by_username(session, username)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    # Recent matches by this player that are visible to the viewer.
+    from app.models.match import Match as _Match, MatchStatus as _MS
+    from app.discovery.queries import visible_character_filter as _vcf
+
+    m_stmt = (
+        select(_Match, Character)
+        .join(Character, Character.id == _Match.character_id)
+        .where(
+            _Match.player_id == target.id,
+            _Match.status.in_([_MS.COMPLETED, _MS.ABANDONED]),
+            *_vcf(player),
+        )
+        .order_by(_Match.ended_at.desc().nulls_last())
+        .limit(20)
+    )
+    recent_rows = list(session.execute(m_stmt).all())
+
+    # Characters owned by this player, visible to the viewer.
+    c_stmt = (
+        select(Character)
+        .where(
+            Character.owner_id == target.id,
+            *_visible_filter(player),
+        )
+        .order_by(Character.created_at.desc())
+    )
+    owned = list(session.execute(c_stmt).scalars())
+
+    return templates.TemplateResponse(
+        request,
+        "player_profile.html",
+        {
+            "player": player,
+            "target": target,
+            "recent_matches": recent_rows,
+            "owned_characters": owned,
+            "owner_map": {target.id: target.username},
+        },
+    )
+
+
+@router.get("/discovery", response_class=HTMLResponse)
+def discovery(
+    request: Request,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    live = list_live_matches(session, viewer=player, limit=20)
+    recent = list_recent_matches(session, viewer=player, limit=20)
+
+    # Character grid — same filter as /.
+    stmt = (
+        select(Character)
+        .where(*_visible_filter(player))
+        .order_by(Character.is_preset.desc(), Character.created_at.desc())
+    )
+    chars = list(session.execute(stmt).scalars())
+    owner_ids = {c.owner_id for c in chars if c.owner_id}
+    owner_map: dict[str, str] = {}
+    if owner_ids:
+        owners = session.execute(
+            select(Player).where(Player.id.in_(owner_ids))
+        ).scalars()
+        owner_map = {p.id: p.username for p in owners}
+
+    return templates.TemplateResponse(
+        request,
+        "discovery.html",
+        {
+            "player": player,
+            "live_matches": live,
+            "recent_matches": recent,
+            "characters": chars,
+            "owner_map": owner_map,
+        },
     )
 
 
@@ -386,6 +519,8 @@ def character_detail(
         owner = session.get(Player, character.owner_id)
         owner_username = owner.username if owner else None
 
+    hof = hall_of_fame_for_character(session, character_id=character_id)
+
     return templates.TemplateResponse(
         request,
         "detail.html",
@@ -401,6 +536,7 @@ def character_detail(
             "is_failed": character.state == CharacterState.GENERATION_FAILED,
             "owner_username": owner_username,
             "is_owner": character.owner_id == player.id,
+            "hall_of_fame": hof,
         },
     )
 
@@ -645,6 +781,52 @@ def match_page(
             "moves_json": moves,
             "engines_available": engines,
             "has_real_engine": bool(real_engines),
+        },
+    )
+
+
+@router.get("/matches/{match_id}/watch", response_class=HTMLResponse, response_model=None)
+def match_watch_page(
+    request: Request,
+    match_id: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse | RedirectResponse:
+    match = session.get(Match, match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+    # Participants don't spectate — redirect them to their own play page.
+    if match.player_id == player.id:
+        return RedirectResponse(url=f"/matches/{match_id}", status_code=303)
+
+    character = session.get(Character, match.character_id)
+    if character is None or character.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Match not found")
+    if character.visibility == Visibility.PRIVATE and character.owner_id != player.id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    if not rating_allowed(character.content_rating, player.max_content_rating):
+        raise HTTPException(status_code=403, detail="Content rating exceeds your preference.")
+
+    # Abandoned matches: sparse and not interesting to a non-participant.
+    if match.status.value == "abandoned":
+        raise HTTPException(status_code=404, detail="This match ended abruptly — nothing to watch.")
+
+    # Completed matches: allow — the watch view shows final state + full move list.
+    match_owner = session.get(Player, match.player_id)
+    moves = [
+        MoveRead.model_validate(m).model_dump(mode="json")
+        for m in sorted(match.moves, key=lambda m: m.move_number)
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "watch.html",
+        {
+            "player": player,
+            "match": match,
+            "character": character,
+            "match_owner": match_owner,
+            "moves_json": moves,
         },
     )
 

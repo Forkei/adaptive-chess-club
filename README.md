@@ -21,7 +21,7 @@ A **Subconscious** agent retrieves relevant memories every turn and feeds them t
 | **2b-3**| UI polish (chat log, memory ribbon, emotion indicator, post-match summary) + live end-to-end test | ⏳ next |
 | **3a**  | Username login, character ownership, content rating, Alembic migrations | ✅ shipped |
 | **3b**  | Socket.IO real-time gameplay, chat-during-thinking, disconnect handling, streamed post-match | ✅ shipped |
-| **3c**  | Match discovery, leaderboard, frontend polish | ⏳ future |
+| **3c**  | Match discovery, spectating + crowd-noise chat, leaderboards + hall of fame, frontend polish | ✅ shipped |
 
 ### What 2a adds
 
@@ -158,6 +158,19 @@ Testing:
   and rate-limiting. Opt-in live variant asserts the memory-before-move ordering with
   real Gemini + Maia-2.
 - `docs/phase_3b_manual_smoke.md` — browser runbook for the M.6–M.8 smoke steps.
+
+### What 3c adds
+
+Social layer on top of the Phase 3b real-time core.
+
+- **Discovery page** (`/discovery`): live matches + recently finished matches + the full character grid, all filtered through a single `visible_character_filter` (content rating + visibility). Your own in-progress match is hidden from "live" (you're already in it); your completed matches do appear under "recently finished". A prominent "Browse live matches →" CTA on `/` keeps discovery findable.
+- **Spectating** (`/matches/{id}/watch`): read-only board + agent chat + memory ribbon + mood, plus a separate "crowd noise" spectator chat panel. Participants see spectator chat in their own panel (with local mute) and a live spectator count. Characters never see spectators — `spectator_chat` is a separate event that bypasses `Match.extra_state.pending_player_chat`. Verified in `test_phase_3c_spectators.py::test_spectator_chat_does_not_reach_subconscious`.
+- **Role-gated Socket.IO handlers**: `_on_connect` tags the session `role=participant` or `role=spectator`; `make_move`, `resign`, `player_chat` reject spectators with typed error events; `spectator_chat` rejects participants. Participant's `player_chat` is also broadcast to spectators as `player_chat_broadcast` so they see the dialogue.
+- **Leaderboards** (`/leaderboard/characters`, `/leaderboard/players`): win-rate ranking with `all | 30d | 7d` windows, minimum-5-matches threshold *within* the selected window, content-rating filter applied at the query level. **Abandoned matches count as character wins** (rage-quit-prone characters should reflect that in their record). Current user's row is highlighted on the player leaderboard.
+- **Hall of fame** on every character detail page: top 10 players vs. that character by wins.
+- **Player profile** at `/players/{username}`: recent matches + characters created, visibility-filtered.
+- **Indexes**: Alembic 0003 adds `ix_matches_status` and `ix_matches_ended_at` for the discovery / leaderboard queries. Idempotent against pre-existing DBs (skips if `matches` table absent, as in the pre-3a migration fixture).
+- **Shared Jinja partials** (`app/web/templates/_partials/`): `character_card.html`, `match_row.html`, and `_macros.html` (rating / visibility / result chips) — used from `/`, `/discovery`, player profile, and the polish pass.
 
 ### What's deliberately NOT in 2a
 

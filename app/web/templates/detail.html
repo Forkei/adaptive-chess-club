@@ -191,4 +191,38 @@
   </div>
 </section>
 {% endif %}
+
+{% if hall_of_fame %}
+<section class="mt-10">
+  <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-3">Hall of fame</h2>
+  <p class="text-xs text-neutral-500 mb-3">Top players against {{ character.name }}, by wins.</p>
+  <div class="rounded-xl border border-neutral-800 bg-neutral-900 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-neutral-950/60 text-[11px] uppercase tracking-wider text-neutral-500">
+        <tr>
+          <th class="text-left font-medium px-4 py-2 w-12">#</th>
+          <th class="text-left font-medium px-4 py-2">Player</th>
+          <th class="text-right font-medium px-4 py-2">Wins</th>
+          <th class="text-right font-medium px-4 py-2">Total</th>
+          <th class="text-right font-medium px-4 py-2">Rate</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-neutral-800">
+        {% for r in hall_of_fame %}
+        <tr class="hover:bg-neutral-800/40 transition {% if r.player_id == player.id %}bg-indigo-900/20{% endif %}">
+          <td class="px-4 py-2 text-neutral-400 font-mono">{{ r.rank }}</td>
+          <td class="px-4 py-2">
+            <a href="/players/{{ r.username }}" class="hover:text-white">@{{ r.username }}</a>
+            {% if r.player_id == player.id %}<span class="text-[10px] uppercase tracking-wider text-indigo-300 ml-2">you</span>{% endif %}
+          </td>
+          <td class="px-4 py-2 text-right font-mono text-emerald-400">{{ r.wins }}</td>
+          <td class="px-4 py-2 text-right font-mono text-neutral-300">{{ r.total_matches }}</td>
+          <td class="px-4 py-2 text-right font-mono text-emerald-300">{{ "%.0f"|format(r.win_rate * 100) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 {% endblock %}
