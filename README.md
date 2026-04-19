@@ -20,7 +20,7 @@ A **Subconscious** agent retrieves relevant memories every turn and feeds them t
 | **2b-2**| Post-match processor (engine analysis, feature extraction, Elo ratchet application, memory generation, narrative summary, background threading, status polling) | ✅ shipped |
 | **2b-3**| UI polish (chat log, memory ribbon, emotion indicator, post-match summary) + live end-to-end test | ⏳ next |
 | **3a**  | Username login, character ownership, content rating, Alembic migrations | ✅ shipped |
-| **3b**  | Socket.IO real-time chat, mood evolution from chat, disconnect handling | ⏳ future |
+| **3b**  | Socket.IO real-time gameplay, chat-during-thinking, disconnect handling, streamed post-match | ✅ shipped |
 | **3c**  | Match discovery, leaderboard, frontend polish | ⏳ future |
 
 ### What 2a adds
@@ -91,6 +91,73 @@ Rage-quit handling: `match.status == ABANDONED` skips move-quality and tells the
   - Per-player `max_content_rating`: characters rated above this are filtered out of listings; direct access returns 404 on `/api/` and a friendly "hidden by your content preference" page on `/characters/{id}`.
   - Rating is injected into every prose-producing LLM prompt: backstory memory generation, Soul system prompt, post-match memory generation, narrative summary. See `app/characters/content_rating_prompts.py`.
   - Player settings page (`/settings`) lets users edit `display_name` and `max_content_rating`. Username is immutable in 3a.
+
+### What 3b adds
+
+Real-time gameplay over Socket.IO, replacing the REST `POST /api/matches/{id}/move` round-trip as the
+live transport. REST stays functional as a fallback and returns `X-Deprecated: Use Socket.IO /play namespace`
+so anyone hitting the API directly sees the migration path.
+
+- **Transport**: `python-socketio` `AsyncServer` mounted alongside FastAPI via `socketio.ASGIApp`
+  (`app/sockets/server.py`). One namespace, `/play`. One room per match (`match:<match_id>`).
+  Cookie-based auth — the existing `player_id` cookie from Phase 3a is parsed on the handshake;
+  no cookie ⇒ connection refused. Same-origin only (`cors_allowed_origins=[]`).
+- **Event contract**: all payloads modelled with Pydantic in `app/sockets/events.py`. Client →
+  server: `make_move`, `player_chat`, `resign`, `ping`, `request_state`. Server → client:
+  `match_state`, `player_move_applied`, `agent_thinking`, `memory_surfaced`, `agent_move`,
+  `agent_chat`, `mood_update`, `match_ended`, `post_match_status`, `post_match_complete`,
+  `match_paused`, `match_resumed`, `player_chat_echoed`, `player_chat_rate_limited`, `pong`, `error`.
+- **Event ordering per character turn** (enforced by `app/matches/streaming.py`):
+  `player_move_applied → agent_thinking → memory_surfaced → agent_move → agent_chat → mood_update`.
+  `memory_surfaced` deliberately fires **before** `agent_move` — the Subconscious runs
+  concurrently with the engine (on the post-player / pre-engine board), so the memory
+  ribbon populates during the "thinking" state. This is the headline UX property of 3b.
+  `agent_thinking.eta_seconds` is an approximate `time_budget + 1.5s` (rounded to 0.5s);
+  document this as a soft estimate — if the Soul returns `speak=None`, the user-visible
+  turn ends at `agent_move` rather than the non-existent `agent_chat`.
+- **Player chat while character is thinking**: `player_chat` events are accepted at any time,
+  buffered into `Match.extra_state['pending_player_chat']` (FIFO, capped at 10 messages / 2000
+  chars via `PENDING_CHAT_MAX_MESSAGES` / `PENDING_CHAT_MAX_CHARS`), and merged into the **next**
+  Subconscious call's `recent_chat` context. Rate-limited to one chat per 500ms per socket
+  (`PLAYER_CHAT_MIN_INTERVAL_MS`); excess ⇒ `player_chat_rate_limited` event (no disconnect).
+  Echoed back as `player_chat_echoed` so the UI can un-fade its optimistic bubble.
+- **Disconnect handling**: closing the tab severs the socket, which stamps
+  `match.extra_state.disconnect_started_at` and arms an `asyncio` task (registry in
+  `app/sockets/disconnect.py`). If the player reconnects before
+  `MATCH_DISCONNECT_COOLDOWN_SECONDS` elapses (default 300s), the task is cancelled,
+  `match_resumed` fires, and gameplay continues. If the cooldown fires, the match is
+  marked `ABANDONED` (character wins — same as resign) and the post-match processor kicks
+  off. Character chat stays frozen during the pause — no "waiting" messages, no
+  impatience behaviour (the design explicitly chose this).
+- **Content rating mid-match**: changing `max_content_rating` during a match does **not**
+  cut the socket — the match plays out; the character just stops appearing in the
+  browse list. The Soul's rating injection was baked in at match creation, not
+  re-evaluated per turn.
+- **Post-match via sockets**: the Phase 2b processor now accepts a
+  `status_callback: Callable[[str, dict], None]`. The Socket.IO layer supplies one
+  (`app/sockets/processor_callback.py`) that emits `post_match_status` events per step
+  and `post_match_complete` with the summary URL. Bridge across the sync-thread/async-loop
+  boundary uses `asyncio.run_coroutine_threadsafe` against the loop captured at app startup.
+  The legacy polling endpoint `GET /api/matches/{id}/post_match_status` remains as a
+  fallback for clients that reconnect after post-match completion.
+- **Single-worker assumption**: the disconnect registry and room state are in-process.
+  Multi-worker deployment requires Redis pub/sub (Phase 4). A startup check warns (but
+  does not fail) when `WEB_CONCURRENCY` or `UVICORN_WORKERS` > 1.
+- **UI** (`app/web/templates/play.html`): Socket.IO client via CDN, a persistent chat
+  input (not gated on turn order), connection-status pill, thinking spinner with eta,
+  memory ribbon populating on `memory_surfaced`, emotion indicator on `agent_chat`,
+  disconnect overlay with live countdown, inline post-match progress → auto-redirect
+  to `/matches/<id>/summary` on `post_match_complete`.
+
+Testing:
+
+- `tests/test_sockets_unit.py` — disconnect registry, pending-chat caps, processor callback.
+- `tests/test_sockets_integration.py` — live Socket.IO via `socketio.AsyncClient` against
+  an in-process uvicorn; covers event ordering, disconnect+reconnect resume, disconnect
+  timeout → abandoned, chat-during-thinking draining into the next Subconscious call,
+  and rate-limiting. Opt-in live variant asserts the memory-before-move ordering with
+  real Gemini + Maia-2.
+- `docs/phase_3b_manual_smoke.md` — browser runbook for the M.6–M.8 smoke steps.
 
 ### What's deliberately NOT in 2a
 

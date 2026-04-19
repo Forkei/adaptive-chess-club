@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -15,15 +17,44 @@ from app.characters.seed import seed_presets
 from app.config import get_settings
 from app.db import init_db
 from app.logging_config import configure_logging
+from app.sockets import build_asgi_app
+from app.sockets.bridge import set_main_loop
 from app.web.routes import router as web_router
 
 logger = logging.getLogger(__name__)
+
+
+def _warn_if_multiworker() -> None:
+    """Log (but do not fail) when multiple workers look likely.
+
+    Phase 3b assumes a single in-process room + cooldown registry. Multi-worker
+    requires Redis pub/sub (Phase 4). A dev running `uvicorn --workers 4` out of
+    habit shouldn't have the app refuse to boot — just warn.
+    """
+    raw = os.environ.get("WEB_CONCURRENCY") or os.environ.get("UVICORN_WORKERS")
+    try:
+        workers = int(raw) if raw else 1
+    except ValueError:
+        workers = 1
+    if workers > 1:
+        logger.warning(
+            "Socket.IO disconnect tracking and per-match rooms assume single-worker "
+            "deployment (detected WEB_CONCURRENCY/UVICORN_WORKERS=%s). Multi-worker "
+            "requires Redis pub/sub (Phase 4). Running anyway — match state may be "
+            "inconsistent under load.",
+            workers,
+        )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
     init_db()
+
+    # Capture the main event loop so the post-match processor's daemon thread
+    # can schedule Socket.IO emits back onto us via run_coroutine_threadsafe.
+    set_main_loop(asyncio.get_running_loop())
+    _warn_if_multiworker()
 
     settings = get_settings()
     # Only kick off preset memory generation if the API key is present — the app
@@ -38,6 +69,9 @@ async def lifespan(app: FastAPI):
             "GEMINI_API_KEY is not set — presets were seeded but memory generation is skipped."
         )
     yield
+
+    # Clear on shutdown so background threads don't try to schedule onto a dead loop.
+    set_main_loop(None)
 
 
 def create_app() -> FastAPI:
@@ -62,4 +96,7 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+fastapi_app = create_app()
+# The combined ASGI app — uvicorn entry point. HTTP flows through FastAPI;
+# Socket.IO traffic is handled by `sio` from app.sockets.server.
+app = build_asgi_app(fastapi_app)

@@ -16,10 +16,16 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+# Phase 3b: optional per-step status callback. Invoked with `(event, payload)`
+# where event ∈ {"step_started", "step_completed", "pipeline_completed",
+# "pipeline_failed"}. Failures inside the callback are swallowed — the pipeline
+# owns completion, not the observer.
+StatusCallback = Callable[[str, dict], None]
 
 from app.db import SessionLocal, session_scope
 from app.llm.client import LLMClient, LLMError, get_llm_client
@@ -140,24 +146,49 @@ class ProcessorConfig:
     run_llm_steps: bool = True
 
 
+def _safe_notify(callback: StatusCallback | None, event: str, payload: dict) -> None:
+    if callback is None:
+        return
+    try:
+        callback(event, payload)
+    except Exception:
+        logger.exception("Post-match status_callback crashed for event=%s", event)
+
+
 def process_match_post_game(
     match_id: str,
     *,
     llm: LLMClient | None = None,
     config: ProcessorConfig | None = None,
+    status_callback: StatusCallback | None = None,
 ) -> None:
     """Run the full post-match pipeline for `match_id`.
 
     Safe to call from a thread. Each step catches its own exceptions;
     a catastrophic failure bubbles up to the outer handler which marks
     the analysis FAILED.
+
+    `status_callback` (Phase 3b) is invoked on each step transition so the
+    Socket.IO layer can stream progress to connected clients. It is called
+    from the worker thread; callers bridging to an async event loop should
+    do so via `asyncio.run_coroutine_threadsafe`.
     """
     cfg = config or ProcessorConfig()
 
     try:
-        _run_pipeline(match_id, llm=llm, cfg=cfg)
+        _run_pipeline(match_id, llm=llm, cfg=cfg, status_callback=status_callback)
+        _safe_notify(
+            status_callback,
+            "pipeline_completed",
+            {"steps_completed": list(ALL_STEPS), "match_id": match_id},
+        )
     except Exception as exc:
         logger.exception("Post-match pipeline crashed for match=%s", match_id)
+        _safe_notify(
+            status_callback,
+            "pipeline_failed",
+            {"error": f"{type(exc).__name__}: {exc}", "match_id": match_id},
+        )
         # Best-effort mark as failed.
         try:
             with session_scope() as session:
@@ -179,7 +210,25 @@ def _run_pipeline(
     *,
     llm: LLMClient | None,
     cfg: ProcessorConfig,
+    status_callback: StatusCallback | None = None,
 ) -> None:
+    completed: list[str] = []
+
+    def _start(step: str) -> None:
+        _safe_notify(
+            status_callback,
+            "step_started",
+            {"current_step": step, "steps_completed": list(completed), "match_id": match_id},
+        )
+
+    def _finish(step: str) -> None:
+        if step not in completed:
+            completed.append(step)
+        _safe_notify(
+            status_callback,
+            "step_completed",
+            {"current_step": step, "steps_completed": list(completed), "match_id": match_id},
+        )
     # Initialize / resume.
     with session_scope() as session:
         match = session.get(Match, match_id)
@@ -205,6 +254,7 @@ def _run_pipeline(
     # --- Step 1: engine analysis -------------------------------------------
     engine_result: dict[str, Any] = {}
     critical_moments: list[dict[str, Any]] = []
+    _start(STEP_ENGINE_ANALYSIS)
     try:
         if cfg.run_engine_analysis:
             engine_result = analyze_match_moves(
@@ -218,12 +268,14 @@ def _run_pipeline(
             a.engine_analysis = engine_result
             a.critical_moments = critical_moments
             _mark_step(session, a, STEP_ENGINE_ANALYSIS)
+        _finish(STEP_ENGINE_ANALYSIS)
     except Exception as exc:
         logger.exception("engine_analysis failed for match=%s: %s", match_id, exc)
 
     # --- Step 2: feature extraction ----------------------------------------
     features_before: dict[str, Any] | None = None
     features_after: dict[str, Any] = {}
+    _start(STEP_FEATURES)
     try:
         with session_scope() as session:
             match = session.get(Match, match_id)
@@ -251,10 +303,12 @@ def _run_pipeline(
             a = _get_analysis(session, match_id)
             a.features = features_after
             _mark_step(session, a, STEP_FEATURES)
+        _finish(STEP_FEATURES)
     except Exception as exc:
         logger.exception("feature_extraction failed for match=%s: %s", match_id, exc)
 
     # --- Step 3: Elo ratchet -----------------------------------------------
+    _start(STEP_ELO_RATCHET)
     try:
         with session_scope() as session:
             match = session.get(Match, match_id)
@@ -269,6 +323,7 @@ def _run_pipeline(
             a.elo_delta_applied = ratchet_result.current_elo_change
             a.floor_raised = ratchet_result.floor_elo_raised
             _mark_step(session, a, STEP_ELO_RATCHET)
+        _finish(STEP_ELO_RATCHET)
     except Exception as exc:
         logger.exception("elo_ratchet failed for match=%s: %s", match_id, exc)
 
@@ -284,6 +339,7 @@ def _run_pipeline(
 
     if cfg.run_llm_steps and llm_client is not None:
         generated_ids: list[str] = []
+        _start(STEP_MEMORY_GEN)
         try:
             with session_scope() as session:
                 match = session.get(Match, match_id)
@@ -317,9 +373,11 @@ def _run_pipeline(
                 a = _get_analysis(session, match_id)
                 a.generated_memory_ids = generated_ids
                 _mark_step(session, a, STEP_MEMORY_GEN)
+            _finish(STEP_MEMORY_GEN)
         except Exception as exc:
             logger.exception("memory_generation failed for match=%s: %s", match_id, exc)
 
+        _start(STEP_NARRATIVE)
         try:
             with session_scope() as session:
                 match = session.get(Match, match_id)
@@ -336,6 +394,7 @@ def _run_pipeline(
                     profile.narrative_summary = new_summary
                 a = _get_analysis(session, match_id)
                 _mark_step(session, a, STEP_NARRATIVE)
+            _finish(STEP_NARRATIVE)
         except Exception as exc:
             logger.exception("narrative_summary failed for match=%s: %s", match_id, exc)
 
@@ -401,6 +460,7 @@ def start_post_match_background(
     *,
     llm: LLMClient | None = None,
     config: ProcessorConfig | None = None,
+    status_callback: StatusCallback | None = None,
 ) -> threading.Thread:
     """Spawn a daemon thread running `process_match_post_game`.
 
@@ -416,6 +476,13 @@ def start_post_match_background(
             ).scalar_one_or_none()
             if existing and existing.status == MatchAnalysisStatus.COMPLETED:
                 logger.debug("post-match already complete for %s; skipping spawn", match_id)
+                # Still fire the completion event — a new observer (e.g. a
+                # socket that reconnected post-completion) may be waiting.
+                _safe_notify(
+                    status_callback,
+                    "pipeline_completed",
+                    {"steps_completed": list(ALL_STEPS), "match_id": match_id},
+                )
                 return _noop_thread()
             if existing and existing.status == MatchAnalysisStatus.RUNNING:
                 logger.debug("post-match already running for %s; skipping spawn", match_id)
@@ -426,7 +493,7 @@ def start_post_match_background(
     t = threading.Thread(
         target=process_match_post_game,
         args=(match_id,),
-        kwargs={"llm": llm, "config": config},
+        kwargs={"llm": llm, "config": config, "status_callback": status_callback},
         daemon=True,
         name=f"postmatch-{match_id[:8]}",
     )

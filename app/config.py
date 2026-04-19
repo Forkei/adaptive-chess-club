@@ -30,6 +30,20 @@ class Settings(BaseSettings):
     maia2_cache_dir: str = ""
     stockfish_path: str = ""
 
+    # Phase 3b — Socket.IO real-time
+    # How long a player has to reconnect after dropping their socket before the
+    # match is abandoned. Short values in tests, 300s in prod.
+    match_disconnect_cooldown_seconds: int = 300
+    # Minimum interval between two `player_chat` events on the same socket.
+    # Excess are rejected with a `player_chat_rate_limited` event, not a disconnect.
+    player_chat_min_interval_ms: int = 500
+    # Pending-chat FIFO cap merged into the next Subconscious call.
+    pending_chat_max_messages: int = 10
+    pending_chat_max_chars: int = 2000
+    # Fixed UI-latency budget added to the engine's time budget to produce the
+    # `agent_thinking.eta_seconds` hint — accounts for Soul + network.
+    agent_thinking_soul_overhead_seconds: float = 1.5
+
     @property
     def log_path(self) -> Path:
         p = Path(self.log_dir)
