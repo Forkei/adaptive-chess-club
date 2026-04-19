@@ -48,6 +48,12 @@ class SoulInput:
     player_just_spoke: bool = False
     last_player_chat: str | None = None
     match_id: str = ""
+    character_color: str = "white"
+    opponent_last_san: str | None = None
+    opponent_last_uci: str | None = None
+    player_took_seconds: float | None = None
+    player_average_seconds: float | None = None
+    elapsed_total_seconds: float | None = None
 
 
 def _fallback_response() -> SoulResponse:
@@ -108,6 +114,12 @@ def run_soul(
         head_to_head=inp.head_to_head,
         player_just_spoke=inp.player_just_spoke,
         last_player_chat=inp.last_player_chat,
+        character_color=inp.character_color,
+        opponent_last_san=inp.opponent_last_san,
+        opponent_last_uci=inp.opponent_last_uci,
+        player_took_seconds=inp.player_took_seconds,
+        player_average_seconds=inp.player_average_seconds,
+        elapsed_total_seconds=inp.elapsed_total_seconds,
     )
     prompt = f"{system}\n\n---\n\n{user}"
 

@@ -169,12 +169,16 @@ def _format_engine_move(
     eval_cp: int | None,
     considered: list[dict[str, Any]] | None,
     time_taken_ms: int | None,
+    character_color: str,
 ) -> str:
-    lines = [f"Your move just played: {san} ({uci})"]
+    lines = [
+        f"YOUR OWN MOVE YOU JUST PLAYED: {san} ({uci}) — you are playing {character_color}.",
+        f"This was YOUR move. YOU chose it. Do NOT attribute this move to the opponent.",
+    ]
     if eval_cp is not None:
-        lines.append(f"Eval after move: {eval_cp:+d}cp")
+        lines.append(f"Eval after your move: {eval_cp:+d}cp")
     if time_taken_ms is not None:
-        lines.append(f"Time taken: {time_taken_ms}ms")
+        lines.append(f"Time you took: {time_taken_ms}ms")
     if considered:
         top_alts = [c for c in considered[:3] if c.get("uci") != uci]
         if top_alts:
@@ -182,7 +186,7 @@ def _format_engine_move(
                 f"{c.get('san') or c.get('uci')}" + (f" ({c['eval_cp']:+d}cp)" if c.get("eval_cp") is not None else "")
                 for c in top_alts
             )
-            lines.append(f"Alternatives considered: {alt_str}")
+            lines.append(f"Alternatives you considered: {alt_str}")
     return "\n".join(lines)
 
 
@@ -204,6 +208,12 @@ def build_user_prompt(
     head_to_head: dict[str, int] | None,
     player_just_spoke: bool,
     last_player_chat: str | None,
+    character_color: str = "your color",
+    opponent_last_san: str | None = None,
+    opponent_last_uci: str | None = None,
+    player_took_seconds: float | None = None,
+    player_average_seconds: float | None = None,
+    elapsed_total_seconds: float | None = None,
 ) -> str:
     polarity = mood_polarity_bucket(mood)
     mood_line = (
@@ -216,16 +226,18 @@ def build_user_prompt(
         if player_just_spoke
         else "The player did not speak this turn — speak only if warranted."
     )
+    opposite_color = "black" if character_color == "white" else "white"
 
     parts: list[str] = []
     parts.append("=== CURRENT TURN ===")
     parts.append(f"Move {move_number}, phase: {game_phase}.")
+    parts.append(f"You are playing {character_color}. Your opponent is playing {opposite_color}.")
     parts.append(f"Mood: {mood_line}")
     parts.append("")
     parts.append("=== BOARD (ground truth — do not second-guess this) ===")
     parts.append(board.prose)
     parts.append("")
-    parts.append("=== WHAT YOU JUST PLAYED ===")
+    parts.append(f"=== YOUR OWN MOVE (you played, {character_color}) ===")
     parts.append(
         _format_engine_move(
             san=engine_move_san,
@@ -233,13 +245,44 @@ def build_user_prompt(
             eval_cp=engine_eval_cp,
             considered=engine_considered,
             time_taken_ms=engine_time_ms,
+            character_color=character_color,
         )
     )
+    parts.append("")
+    parts.append(f"=== OPPONENT'S LAST MOVE (the player, {opposite_color}) ===")
+    if opponent_last_san or opponent_last_uci:
+        san_part = opponent_last_san or "?"
+        uci_part = opponent_last_uci or "?"
+        parts.append(
+            f"OPPONENT'S LAST MOVE: {san_part} ({uci_part}) — they are playing {opposite_color}."
+        )
+        parts.append("This was THE PLAYER's move, not yours.")
+    else:
+        parts.append("(opponent has not moved yet — you are opening)")
     parts.append("")
     parts.append("=== OPPONENT CONTEXT ===")
     parts.append(_format_opponent(opponent_profile_summary, head_to_head))
     if last_player_chat:
         parts.append(f'Player\'s latest message: "{last_player_chat}"')
+    if player_took_seconds is not None or elapsed_total_seconds is not None:
+        time_bits: list[str] = []
+        if player_took_seconds is not None:
+            time_bits.append(f"PLAYER TOOK: {player_took_seconds:.1f} seconds on their last move")
+        if player_average_seconds is not None:
+            time_bits.append(
+                f"PLAYER'S AVERAGE MOVE TIME SO FAR: {player_average_seconds:.1f} seconds"
+            )
+        if elapsed_total_seconds is not None:
+            time_bits.append(
+                f"ELAPSED TOTAL MATCH TIME: {elapsed_total_seconds / 60:.1f} minutes"
+            )
+        parts.append("")
+        parts.append("=== TIMING ===")
+        parts.extend(time_bits)
+        parts.append(
+            "Do not accuse the player of being slow unless player_took_seconds > 60 "
+            "OR player_took_seconds > 3 * player_average_so_far."
+        )
     parts.append("")
     parts.append("=== RECENT CHAT (oldest -> newest) ===")
     parts.append(_format_recent_chat(recent_chat))
@@ -249,6 +292,10 @@ def build_user_prompt(
     parts.append("")
     parts.append("=== INSTRUCTIONS ===")
     parts.append(speaking_hint)
+    parts.append(
+        f"Reminder: you are playing {character_color}. The opponent is playing {opposite_color}. "
+        "Never confuse your own move with the opponent's."
+    )
     parts.append(
         "Produce the JSON response now. Remember: silence (`speak: null`) is the usual case."
     )

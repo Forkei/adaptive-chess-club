@@ -78,8 +78,10 @@ def _soul_input(memories: list[SurfacedMemory]) -> SoulInput:
 class _FakeLLMReturning:
     def __init__(self, resp: SoulResponse | Exception):
         self._resp = resp
+        self.last_prompt: str | None = None
 
     def generate_structured(self, **kwargs):
+        self.last_prompt = kwargs.get("prompt")
         if isinstance(self._resp, Exception):
             raise self._resp
         return self._resp
@@ -140,3 +142,47 @@ def test_soul_response_accepts_silent_output():
     assert r.speak is None
     assert r.emotion == "neutral"
     assert r.referenced_memory_ids == []
+
+
+def test_soul_prompt_labels_engine_move_and_player_move_unambiguously():
+    """Regression for the Ng1 misattribution bug.
+
+    The Soul prompt must make it impossible to confuse the engine's move
+    (the character's own move) with the opponent's last move. Both must
+    be labeled, with color reminders in multiple places.
+    """
+    surfaced = _surfaced([])
+    inp = SoulInput(
+        board=_soul_input(surfaced).board,
+        mood=MoodState(aggression=0.5, confidence=0.5, tilt=0.0, engagement=0.5),
+        surfaced_memories=surfaced,
+        recent_chat=[],
+        engine_move_san="Ng1",
+        engine_move_uci="f3g1",
+        engine_eval_cp=-20,
+        engine_considered=[],
+        engine_time_ms=150,
+        move_number=8,
+        game_phase="opening",
+        match_id="m-1",
+        character_color="white",
+        opponent_last_san="Nc6",
+        opponent_last_uci="b8c6",
+    )
+    resp = SoulResponse(speak=None, emotion="neutral", emotion_intensity=0.2)
+    fake = _FakeLLMReturning(resp)
+    run_soul(_char(), inp, llm=fake)
+
+    assert fake.last_prompt is not None
+    prompt = fake.last_prompt
+    # Engine move is unambiguously attributed to the character.
+    assert "YOUR OWN MOVE YOU JUST PLAYED: Ng1" in prompt
+    assert "you are playing white" in prompt
+    # Player move is unambiguously attributed to the opponent.
+    assert "OPPONENT'S LAST MOVE: Nc6" in prompt
+    assert "they are playing black" in prompt
+    # No neutral phrasing that could let the model conflate sides.
+    assert "Your move just played" not in prompt  # old ambiguous phrasing gone
+    # Color reminders appear multiple times (header + per-section + instructions).
+    assert prompt.count("white") >= 2
+    assert prompt.count("black") >= 2

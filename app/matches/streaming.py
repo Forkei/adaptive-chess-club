@@ -171,6 +171,21 @@ def _load_last_chat_lines(session, match_id: str, limit: int = 5) -> list[str]:
     return out[-limit:]
 
 
+def _load_last_player_san(session, match_id: str) -> str | None:
+    match = session.get(Match, match_id)
+    if match is None:
+        return None
+    player_side = match.player_color
+    stmt = (
+        select(Move)
+        .where(Move.match_id == match_id, Move.side == player_side)
+        .order_by(Move.move_number.desc())
+        .limit(1)
+    )
+    mv = session.execute(stmt).scalar_one_or_none()
+    return mv.san if mv else None
+
+
 def _load_last_player_context(session, match_id: str) -> tuple[str | None, str | None]:
     """See `app.matches.service._load_last_player_context` — mirrored here for
     the streaming turn loop (doesn't import from service to avoid cycles)."""
@@ -428,6 +443,8 @@ async def _run_engine_and_agents(
         # --- Prep Subconscious input on the PRE-ENGINE board --------------
         pre_engine_summary = board_to_english(board, eval_cp=None)
         last_player_uci, last_player_chat = _load_last_player_context(session, match.id)
+        last_player_san = _load_last_player_san(session, match.id)
+        character_color_str = "black" if match.player_color == Color.WHITE else "white"
         last_move_rows = list(
             session.execute(
                 select(Move)
@@ -559,6 +576,9 @@ async def _run_engine_and_agents(
             player_just_spoke=bool(last_player_chat) or bool(pending),
             last_player_chat=last_player_chat,
             match_id=match_id_local,
+            character_color=character_color_str,
+            opponent_last_san=last_player_san,
+            opponent_last_uci=last_player_uci,
         )
         return run_soul(character, soul_input)
 

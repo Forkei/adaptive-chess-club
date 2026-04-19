@@ -368,6 +368,21 @@ def _load_last_chat_lines(session: Session, match_id: str, limit: int = 5) -> li
     return out[-limit:]
 
 
+def _load_last_player_san(session: Session, match_id: str) -> str | None:
+    match = session.get(Match, match_id)
+    if match is None:
+        return None
+    player_side = match.player_color
+    stmt = (
+        select(Move)
+        .where(Move.match_id == match_id, Move.side == player_side)
+        .order_by(Move.move_number.desc())
+        .limit(1)
+    )
+    mv = session.execute(stmt).scalar_one_or_none()
+    return mv.san if mv else None
+
+
 def _load_last_player_context(session: Session, match_id: str) -> tuple[str | None, str | None]:
     """Return (last_player_uci, last_player_chat) from the most recent player move.
 
@@ -443,6 +458,8 @@ def _run_agents_sync(
     board_summary = board_to_english(board_after, eval_cp=engine_result.eval_cp)
 
     last_player_uci, last_player_chat = _load_last_player_context(session, match.id)
+    last_player_san = _load_last_player_san(session, match.id)
+    character_color_str = "black" if match.player_color == Color.WHITE else "white"
 
     # Pull the most recent SAN moves for retrieval context.
     last_move_rows = list(
@@ -501,6 +518,9 @@ def _run_agents_sync(
         player_just_spoke=bool(last_player_chat),
         last_player_chat=last_player_chat,
         match_id=match.id,
+        character_color=character_color_str,
+        opponent_last_san=last_player_san,
+        opponent_last_uci=last_player_uci,
     )
 
     soul_resp = run_soul(character, soul_input)
