@@ -18,6 +18,12 @@ from app.models.match import Color, Match, MatchStatus, Player
 from app.sockets import disconnect as disconnect_registry
 from app.sockets.server import _append_pending_chat
 from app.sockets.events import match_room_name
+from app.matches.streaming import (
+    _chat_soul_rate_limit_ok,
+    _in_flight_turns,
+    reset_chat_soul_rate_limit,
+    run_chat_triggered_soul,
+)
 
 
 def _mk_player(sess, username="p"):
@@ -321,3 +327,113 @@ def test_processor_invokes_status_callback_between_steps(monkeypatch):
     assert "elo_ratchet" in started
     # pipeline_completed payload contains the full step list.
     assert set(ALL_STEPS).issubset(set(completed_steps_last))
+
+
+# --- Patch Pass 2 Item 5: chat-triggered Soul ----------------------------
+
+
+def test_chat_triggered_soul_fires_when_no_turn_in_flight(monkeypatch):
+    """When the player chats and no character turn is in flight, a
+    lightweight Soul call fires and emits agent_chat if it speaks."""
+    from app.schemas.agents import MoodDeltas, SoulResponse
+    from app.matches import streaming as streaming_mod
+
+    reset_chat_soul_rate_limit()
+
+    # Stub run_soul so no real LLM is called.
+    called = {"count": 0}
+
+    def _fake_run_soul(character, soul_input):
+        called["count"] += 1
+        return SoulResponse(
+            speak="I hear you.",
+            emotion="focused",
+            emotion_intensity=0.3,
+            mood_deltas=MoodDeltas(),
+        )
+
+    monkeypatch.setattr(streaming_mod, "run_soul", _fake_run_soul)
+
+    with SessionLocal() as s:
+        p = _mk_player(s, "item5a")
+        c = _mk_character(s)
+        m = _mk_match(s, p, c)
+        s.commit()
+        match_id = m.id
+
+    emitted = []
+
+    async def _emit(resp):
+        emitted.append(resp.speak)
+
+    fired = asyncio.run(
+        run_chat_triggered_soul(match_id=match_id, emit_chat=_emit)
+    )
+    assert fired is True
+    assert called["count"] == 1
+    assert emitted == ["I hear you."]
+
+
+def test_chat_triggered_soul_rate_limited_to_once_per_10s(monkeypatch):
+    """Second fire within the rate-limit window returns False and does not
+    re-invoke run_soul."""
+    from app.schemas.agents import MoodDeltas, SoulResponse
+    from app.matches import streaming as streaming_mod
+
+    reset_chat_soul_rate_limit()
+
+    call_count = {"n": 0}
+
+    def _fake_run_soul(character, soul_input):
+        call_count["n"] += 1
+        return SoulResponse(speak=None, emotion="neutral", emotion_intensity=0.2,
+                            mood_deltas=MoodDeltas())
+
+    monkeypatch.setattr(streaming_mod, "run_soul", _fake_run_soul)
+
+    with SessionLocal() as s:
+        p = _mk_player(s, "item5b")
+        c = _mk_character(s)
+        m = _mk_match(s, p, c)
+        s.commit()
+        match_id = m.id
+
+    async def _emit(_resp):
+        pass
+
+    first = asyncio.run(run_chat_triggered_soul(match_id=match_id, emit_chat=_emit))
+    second = asyncio.run(run_chat_triggered_soul(match_id=match_id, emit_chat=_emit))
+    assert first is True
+    assert second is False  # rate-limited
+    assert call_count["n"] == 1
+
+
+def test_chat_triggered_soul_skips_when_turn_in_flight(monkeypatch):
+    """While a character turn is in flight (engine + Subconscious + Soul),
+    the chat-triggered path no-ops. The regular buffering handles chat."""
+    from app.schemas.agents import MoodDeltas, SoulResponse
+    from app.matches import streaming as streaming_mod
+
+    reset_chat_soul_rate_limit()
+
+    def _fake_run_soul(character, soul_input):
+        return SoulResponse(speak="shouldn't reach", emotion="neutral",
+                            emotion_intensity=0.2, mood_deltas=MoodDeltas())
+
+    monkeypatch.setattr(streaming_mod, "run_soul", _fake_run_soul)
+
+    with SessionLocal() as s:
+        p = _mk_player(s, "item5c")
+        c = _mk_character(s)
+        m = _mk_match(s, p, c)
+        s.commit()
+        match_id = m.id
+
+    _in_flight_turns.add(match_id)
+    try:
+        async def _emit(_r):
+            raise AssertionError("emit must not be called while turn in flight")
+        fired = asyncio.run(run_chat_triggered_soul(match_id=match_id, emit_chat=_emit))
+        assert fired is False
+    finally:
+        _in_flight_turns.discard(match_id)

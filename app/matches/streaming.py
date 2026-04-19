@@ -367,6 +367,156 @@ def _persist_engine_move(
 # --- Main entry point ------------------------------------------------------
 
 
+# --- Item 5: chat-triggered immediate Soul response -----------------------
+
+
+# In-flight turn registry: marks that `_run_engine_and_agents` is executing for
+# a given match. Chat-triggered Soul calls skip this window so we don't
+# double-fire on top of the turn's own Soul call.
+_in_flight_turns: set[str] = set()
+
+
+def _turn_in_flight(match_id: str) -> bool:
+    return match_id in _in_flight_turns
+
+
+# Per-match last-fired timestamp for the chat-triggered path (monotonic ms).
+_chat_soul_last_ms: dict[str, int] = {}
+
+
+def _chat_soul_rate_limit_ok(match_id: str, min_interval_ms: int) -> bool:
+    """Token-spacing: returns True if the match hasn't fired a chat-triggered
+    Soul call in the last `min_interval_ms`. Updates the timestamp on pass.
+    """
+    import time as _time
+
+    now_ms = int(_time.monotonic() * 1000)
+    last = _chat_soul_last_ms.get(match_id, 0)
+    if now_ms - last < min_interval_ms:
+        return False
+    _chat_soul_last_ms[match_id] = now_ms
+    return True
+
+
+def reset_chat_soul_rate_limit() -> None:
+    """Testing hook."""
+    _chat_soul_last_ms.clear()
+    _in_flight_turns.clear()
+
+
+async def run_chat_triggered_soul(
+    *,
+    match_id: str,
+    emit_chat: Callable[[SoulResponse], Awaitable[None]],
+) -> bool:
+    """Fire a lightweight Soul call when the player chats between character turns.
+
+    No engine move, no mood persist, no Move-row side-effects. Just: character
+    sheet + mood + opponent profile + last N chat messages + current board
+    summary → SoulResponse. If it speaks, emit agent_chat.
+
+    Returns True if the call fired (even if silent), False if rate-limited or
+    skipped because a character turn is in flight.
+
+    Rate limit: `chat_triggered_soul_min_interval_ms` per match. During an
+    active character turn the regular buffering path handles the chat —
+    this function no-ops in that window.
+    """
+    settings = get_settings()
+    if _turn_in_flight(match_id):
+        return False
+    if not _chat_soul_rate_limit_ok(match_id, settings.chat_triggered_soul_min_interval_ms):
+        return False
+
+    with SessionLocal() as session:
+        match = session.get(Match, match_id)
+        if match is None or match.status != MatchStatus.IN_PROGRESS:
+            return False
+        character = session.get(Character, match.character_id)
+        if character is None:
+            return False
+
+        smoothed = load_mood(match.id, smoothed=True)
+        if smoothed is None:
+            from app.director import initial_mood_for_character
+
+            smoothed = initial_mood_for_character(character)
+
+        board = _svc.board_with_history(match, session)
+        board_summary = board_to_english(board, eval_cp=None)
+
+        last_player_uci, last_player_chat = _load_last_player_context(session, match.id)
+        last_player_san = _load_last_player_san(session, match.id)
+
+        # Chat context: last N moves' chat plus any pending.
+        recent_chat = _load_last_chat_lines(session, match.id)
+        pending = _peek_pending_chat(match)
+        for entry in pending:
+            recent_chat.append(f"Player: {entry.get('text', '')}")
+
+        profile = _opponent_profile_for(
+            session, character_id=match.character_id, player_id=match.player_id
+        )
+        character_color_str = "black" if match.player_color == Color.WHITE else "white"
+        player_took_s, player_avg_s, elapsed_s = _svc._compute_player_timings(session, match)
+
+    # No engine move at chat-triggered time — point the prompt at the last
+    # character move so the Soul can respond in context. If the character
+    # hasn't moved yet, leave engine_move_* blank.
+    with SessionLocal() as s2:
+        last_char_move = s2.execute(
+            select(Move)
+            .where(
+                Move.match_id == match_id,
+                Move.side != (Color.WHITE if character_color_str == "black" else Color.BLACK),
+            )
+            .order_by(Move.move_number.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    engine_move_san = last_char_move.san if last_char_move else ""
+    engine_move_uci = last_char_move.uci if last_char_move else ""
+
+    def _soul_call() -> SoulResponse:
+        soul_input = SoulInput(
+            board=board_summary,
+            mood=smoothed,
+            surfaced_memories=[],  # Subconscious skipped on the lightweight path
+            recent_chat=recent_chat,
+            engine_move_san=engine_move_san,
+            engine_move_uci=engine_move_uci,
+            engine_eval_cp=None,
+            engine_considered=[],
+            engine_time_ms=None,
+            move_number=match.move_count,
+            game_phase=board_summary.phase,
+            opponent_profile_summary=_profile_summary(profile) if profile else None,
+            head_to_head=_head_to_head(profile) if profile else None,
+            player_just_spoke=True,
+            last_player_chat=(pending[-1].get("text") if pending else last_player_chat),
+            match_id=match_id,
+            character_color=character_color_str,
+            opponent_last_san=last_player_san,
+            opponent_last_uci=last_player_uci,
+            player_took_seconds=player_took_s,
+            player_average_seconds=player_avg_s,
+            elapsed_total_seconds=elapsed_s,
+        )
+        return run_soul(character, soul_input)
+
+    try:
+        soul_resp = await asyncio.to_thread(_soul_call)
+    except Exception as exc:
+        logger.warning(
+            "Chat-triggered Soul failed (match=%s): %s — dropping",
+            match_id, exc,
+        )
+        return True  # still "fired" — rate-limit already counted
+
+    if soul_resp.speak:
+        await emit_chat(soul_resp)
+    return True
+
+
 async def apply_player_move_streamed(
     *,
     match_id: str,
@@ -419,6 +569,16 @@ async def apply_player_move_streamed(
 
 
 async def _run_engine_and_agents(
+    *, match_id: str, emitters: TurnEmitters, settings
+) -> None:
+    _in_flight_turns.add(match_id)
+    try:
+        await _run_engine_and_agents_inner(match_id=match_id, emitters=emitters, settings=settings)
+    finally:
+        _in_flight_turns.discard(match_id)
+
+
+async def _run_engine_and_agents_inner(
     *, match_id: str, emitters: TurnEmitters, settings
 ) -> None:
     with SessionLocal() as session:

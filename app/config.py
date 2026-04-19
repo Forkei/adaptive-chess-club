@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # Periodic sweep cadence (both reapers run in one coroutine).
     housekeeping_interval_seconds: int = 300
 
+    # Patch Pass 2 Item 5 — chat-triggered immediate Soul response.
+    # When a player chat arrives and no character turn is in flight, fire a
+    # lightweight Soul call at most once every this many milliseconds per match.
+    # Prevents spam-chat cost blow-ups. Excess messages batch for the next
+    # eligible response.
+    chat_triggered_soul_min_interval_ms: int = 10000
+
     @property
     def log_path(self) -> Path:
         p = Path(self.log_dir)

@@ -605,6 +605,31 @@ async def _on_player_chat(sid, data):
         namespace=NAMESPACE,
     )
 
+    # Patch Pass 2 Item 5: fire a lightweight Soul call if no character turn
+    # is in flight, so the character can respond to chat that arrives between
+    # turns instead of always waiting for the next move. Rate-limited per
+    # match; during an active turn this is a no-op (the existing buffering
+    # path handles chat merged into the next Subconscious call).
+    from app.matches.streaming import run_chat_triggered_soul
+
+    async def _emit_chat(soul_response) -> None:
+        await sio.emit(
+            S2C_AGENT_CHAT,
+            AgentChatPayload(
+                speak=soul_response.speak,
+                emotion=soul_response.emotion,
+                emotion_intensity=soul_response.emotion_intensity,
+                referenced_memory_ids=list(soul_response.referenced_memory_ids or []),
+            ).model_dump(mode="json"),
+            room=match_room(match_id),
+            namespace=NAMESPACE,
+        )
+
+    # Fire-and-forget: don't block the chat handler on Soul latency.
+    asyncio.create_task(
+        run_chat_triggered_soul(match_id=match_id, emit_chat=_emit_chat)
+    )
+
 
 # --- Event: spectator_chat ------------------------------------------------
 
