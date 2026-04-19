@@ -4,23 +4,50 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, Form, HTTPException, Request, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.api.players import COOKIE_MAX_AGE, PLAYER_COOKIE
+from app.auth import (
+    COOKIE_MAX_AGE,
+    PLAYER_COOKIE,
+    UsernameError,
+    find_player_by_username,
+    generate_guest_username,
+    get_optional_player,
+    is_guest_username,
+    normalize_username,
+    require_player,
+    validate_username,
+)
 from app.characters.openings import OPENINGS
 from app.characters.style import style_to_prompt_fragments
 from app.db import get_session
 from app.engine import EngineUnavailable, available_engines
 from app.matches import service as match_service
 from app.memory.crud import counts_by_scope, counts_by_type, list_for_character
-from app.models.character import Character, CharacterState
+from app.models.character import (
+    Character,
+    CharacterState,
+    ContentRating,
+    Visibility,
+    rating_allowed,
+    rating_level,
+)
 from app.models.match import Match, Player
-from app.schemas.character import CharacterCreate
-from app.schemas.match import MoveRead
+from app.schemas.character import CharacterCreate, CharacterUpdate
+from app.schemas.match import MoveRead, PlayerSettingsUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -31,38 +58,208 @@ router = APIRouter(tags=["web"])
 
 
 def _run_generation_bg(character_id: str) -> None:
-    import logging
-
     from app.characters.memory_generator import generate_and_store
 
     try:
         generate_and_store(character_id)
     except Exception:
-        logging.getLogger(__name__).exception(
-            "Memory generation failed for %s", character_id
-        )
+        logger.exception("Memory generation failed for %s", character_id)
+
+
+def _visible_filter(player: Player):
+    """Build the WHERE clause for characters visible to this player."""
+    max_idx = rating_level(player.max_content_rating)
+    allowed = [
+        r for r in (ContentRating.FAMILY, ContentRating.MATURE, ContentRating.UNRESTRICTED)
+        if rating_level(r) <= max_idx
+    ]
+    return [
+        Character.deleted_at.is_(None),
+        Character.content_rating.in_(allowed),
+        or_(Character.visibility == Visibility.PUBLIC, Character.owner_id == player.id),
+    ]
+
+
+# ------------------------------ Landing ------------------------------
 
 
 @router.get("/", response_class=HTMLResponse)
-def index(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
-    chars = list(
-        session.execute(
-            select(Character)
-            .where(Character.deleted_at.is_(None))
-            .order_by(Character.is_preset.desc(), Character.created_at.desc())
+def index(
+    request: Request,
+    player: Player | None = Depends(get_optional_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    if player is None:
+        return templates.TemplateResponse(
+            request,
+            "landing.html",
+            {"player": None},
+        )
+
+    stmt = (
+        select(Character)
+        .where(*_visible_filter(player))
+        .order_by(Character.is_preset.desc(), Character.created_at.desc())
+    )
+    chars = list(session.execute(stmt).scalars())
+
+    # Build owner-username map for labels.
+    owner_ids = {c.owner_id for c in chars if c.owner_id}
+    owner_map: dict[str, str] = {}
+    if owner_ids:
+        owners = session.execute(
+            select(Player).where(Player.id.in_(owner_ids))
         ).scalars()
-    )
+        owner_map = {p.id: p.username for p in owners}
+
     return templates.TemplateResponse(
-        request, "index.html", {"characters": chars}
+        request,
+        "index.html",
+        {"player": player, "characters": chars, "owner_map": owner_map},
     )
+
+
+# ------------------------------ Auth ------------------------------
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_form(
+    request: Request,
+    next: str = "/",
+    error: str | None = None,
+    flash: str | None = None,
+    player: Player | None = Depends(get_optional_player),
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {
+            "player": player,
+            "next": next,
+            "error": error,
+            "flash": flash,
+            "prefill": player.username if (player and is_guest_username(player.username)) else "",
+        },
+    )
+
+
+@router.post("/login")
+def login_submit(
+    request: Request,
+    response: Response,
+    username: str = Form(...),
+    next: str = Form("/"),
+    player: Player | None = Depends(get_optional_player),
+    session: Session = Depends(get_session),
+):
+    normalized = normalize_username(username)
+    try:
+        validate_username(normalized)
+    except UsernameError as exc:
+        return RedirectResponse(
+            url=f"/login?next={next}&error={exc.code}",
+            status_code=303,
+        )
+
+    existing = find_player_by_username(session, normalized)
+    flash_key: str
+    final_player: Player
+
+    if player is not None and is_guest_username(player.username) and existing is None:
+        # Rename the guest account — preserves matches, memories, stats.
+        player.username = normalized
+        session.commit()
+        session.refresh(player)
+        flash_key = "renamed"
+        final_player = player
+    elif existing is not None:
+        if player is not None and player.id == existing.id:
+            flash_key = "welcome_back"
+        else:
+            flash_key = "welcome_back"
+        final_player = existing
+    else:
+        # Brand-new username. Create the account.
+        final_player = Player(
+            username=normalized,
+            display_name=normalized,
+        )
+        session.add(final_player)
+        session.commit()
+        session.refresh(final_player)
+        flash_key = "welcome"
+
+    # Build redirect that sets the cookie.
+    safe_next = next if next.startswith("/") and not next.startswith("//") else "/"
+    # Append flash via query to the destination.
+    separator = "&" if "?" in safe_next else "?"
+    target = f"{safe_next}{separator}flash={flash_key}&u={final_player.username}"
+    redir = RedirectResponse(url=target, status_code=303)
+    redir.set_cookie(
+        key=PLAYER_COOKIE,
+        value=final_player.id,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+    )
+    return redir
+
+
+@router.get("/logout")
+def logout(response: Response):
+    redir = RedirectResponse(url="/login", status_code=303)
+    redir.delete_cookie(PLAYER_COOKIE)
+    return redir
+
+
+@router.get("/settings", response_class=HTMLResponse)
+def settings_page(
+    request: Request,
+    player: Player = Depends(require_player),
+    flash: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {"player": player, "flash": flash, "error": error},
+    )
+
+
+@router.post("/settings")
+def settings_submit(
+    display_name: str = Form(...),
+    max_content_rating: str = Form(...),
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+):
+    try:
+        rating = ContentRating(max_content_rating)
+    except ValueError:
+        return RedirectResponse(url="/settings?error=invalid_rating", status_code=303)
+    display_name = display_name.strip()
+    if not display_name:
+        return RedirectResponse(url="/settings?error=empty_display_name", status_code=303)
+    if len(display_name) > 80:
+        return RedirectResponse(url="/settings?error=display_name_too_long", status_code=303)
+    player.display_name = display_name
+    player.max_content_rating = rating
+    session.commit()
+    return RedirectResponse(url="/settings?flash=saved", status_code=303)
+
+
+# ------------------------------ Characters ------------------------------
 
 
 @router.get("/characters/new", response_class=HTMLResponse)
-def new_character_form(request: Request) -> HTMLResponse:
+def new_character_form(
+    request: Request,
+    player: Player = Depends(require_player),
+) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "new.html",
-        {"openings": OPENINGS},
+        {"player": player, "openings": OPENINGS},
     )
 
 
@@ -83,8 +280,20 @@ def create_character_html(
     opening_preferences: list[str] = Form(default=[]),
     voice_descriptor: str = Form(""),
     quirks: str = Form(""),
+    visibility: str = Form("public"),
+    content_rating: str = Form("family"),
+    player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> RedirectResponse:
+    try:
+        vis = Visibility(visibility)
+    except ValueError:
+        vis = Visibility.PUBLIC
+    try:
+        rating = ContentRating(content_rating)
+    except ValueError:
+        rating = ContentRating.FAMILY
+
     payload = CharacterCreate(
         name=name,
         short_description=short_description,
@@ -99,6 +308,8 @@ def create_character_html(
         opening_preferences=opening_preferences,
         voice_descriptor=voice_descriptor,
         quirks=quirks,
+        visibility=vis,
+        content_rating=rating,
     )
     character = Character(
         name=payload.name,
@@ -117,6 +328,9 @@ def create_character_html(
         opening_preferences=list(payload.opening_preferences),
         voice_descriptor=payload.voice_descriptor,
         quirks=payload.quirks,
+        visibility=payload.visibility,
+        content_rating=payload.content_rating,
+        owner_id=player.id,
         state=CharacterState.GENERATING_MEMORIES,
         memory_generation_started_at=datetime.utcnow(),
         is_preset=False,
@@ -133,17 +347,27 @@ def create_character_html(
 def character_detail(
     request: Request,
     character_id: str,
+    player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     character = session.get(Character, character_id)
     if character is None or character.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Character not found")
+    if character.visibility == Visibility.PRIVATE and character.owner_id != player.id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if not rating_allowed(character.content_rating, player.max_content_rating):
+        # Spec: "show as 'hidden by your content preference' if accessed directly"
+        return templates.TemplateResponse(
+            request,
+            "rating_hidden.html",
+            {"player": player, "character_rating": character.content_rating.value},
+            status_code=403,
+        )
 
     scope_counts = counts_by_scope(session, character_id=character_id)
     type_counts = counts_by_type(session, character_id=character_id)
     fragments = style_to_prompt_fragments(character)
 
-    # Sample a handful of memories grouped by type for a quick tour.
     samples_by_type: dict[str, list] = {}
     for type_value in type_counts:
         from app.models.memory import MemoryType as MT
@@ -157,10 +381,16 @@ def character_detail(
         )
         samples_by_type[type_value] = rows
 
+    owner_username = None
+    if character.owner_id:
+        owner = session.get(Player, character.owner_id)
+        owner_username = owner.username if owner else None
+
     return templates.TemplateResponse(
         request,
         "detail.html",
         {
+            "player": player,
             "character": character,
             "scope_counts": scope_counts,
             "type_counts": type_counts,
@@ -169,45 +399,200 @@ def character_detail(
             "samples_by_type": samples_by_type,
             "is_generating": character.state == CharacterState.GENERATING_MEMORIES,
             "is_failed": character.state == CharacterState.GENERATION_FAILED,
+            "owner_username": owner_username,
+            "is_owner": character.owner_id == player.id,
         },
     )
 
 
-# ------------------------------ Matches ------------------------------
-
-
-def _ensure_player_cookie(session: Session, player_id: str | None, response: Response) -> Player:
-    if player_id:
-        existing = session.get(Player, player_id)
-        if existing is not None:
-            return existing
-    player = Player(display_name="Guest")
-    session.add(player)
-    session.commit()
-    session.refresh(player)
-    response.set_cookie(
-        key=PLAYER_COOKIE,
-        value=player.id,
-        max_age=COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="lax",
-    )
-    return player
-
-
-@router.post("/play/{character_id}")
-async def start_match_html(
+@router.get("/characters/{character_id}/edit", response_class=HTMLResponse)
+def edit_character_form(
+    request: Request,
     character_id: str,
-    response: Response,
-    player_id: str | None = Cookie(default=None, alias=PLAYER_COOKIE),
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    character = session.get(Character, character_id)
+    if character is None or character.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if character.is_preset:
+        raise HTTPException(status_code=403, detail="Presets cannot be edited. Clone first.")
+    if character.owner_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your character.")
+
+    return templates.TemplateResponse(
+        request,
+        "edit.html",
+        {"player": player, "character": character, "openings": OPENINGS},
+    )
+
+
+@router.post("/characters/{character_id}/edit")
+def edit_character_submit(
+    character_id: str,
+    short_description: str = Form(""),
+    backstory: str = Form(""),
+    avatar_emoji: str = Form("♟️"),
+    aggression: int = Form(5),
+    risk_tolerance: int = Form(5),
+    patience: int = Form(5),
+    trash_talk: int = Form(5),
+    voice_descriptor: str = Form(""),
+    quirks: str = Form(""),
+    opening_preferences: list[str] = Form(default=[]),
+    visibility: str = Form("public"),
+    content_rating: str = Form("family"),
+    player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> RedirectResponse:
     character = session.get(Character, character_id)
     if character is None or character.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Character not found")
+    if character.is_preset:
+        raise HTTPException(status_code=403, detail="Presets cannot be edited. Clone first.")
+    if character.owner_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your character.")
 
-    redirect = RedirectResponse(url="/", status_code=303)
-    player = _ensure_player_cookie(session, player_id, redirect)
+    try:
+        vis = Visibility(visibility)
+    except ValueError:
+        vis = character.visibility
+    try:
+        rating = ContentRating(content_rating)
+    except ValueError:
+        rating = character.content_rating
+
+    update = CharacterUpdate(
+        short_description=short_description,
+        backstory=backstory,
+        avatar_emoji=avatar_emoji or "♟️",
+        aggression=aggression,
+        risk_tolerance=risk_tolerance,
+        patience=patience,
+        trash_talk=trash_talk,
+        voice_descriptor=voice_descriptor,
+        quirks=quirks,
+        opening_preferences=opening_preferences,
+        visibility=vis,
+        content_rating=rating,
+    )
+    for field, value in update.model_dump(exclude_unset=True, exclude_none=True).items():
+        setattr(character, field, value)
+    character.updated_at = datetime.utcnow()
+    session.commit()
+    return RedirectResponse(url=f"/characters/{character_id}", status_code=303)
+
+
+@router.post("/characters/{character_id}/delete")
+def delete_character_html(
+    character_id: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    character = session.get(Character, character_id)
+    if character is None or character.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if character.is_preset:
+        raise HTTPException(status_code=403, detail="Preset characters cannot be deleted")
+    if character.owner_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your character.")
+    character.deleted_at = datetime.utcnow()
+    session.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+
+@router.post("/characters/{character_id}/clone")
+def clone_character_html(
+    character_id: str,
+    background: BackgroundTasks,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    source = session.get(Character, character_id)
+    if source is None or source.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if source.visibility == Visibility.PRIVATE and source.owner_id != player.id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if not rating_allowed(source.content_rating, player.max_content_rating):
+        raise HTTPException(status_code=403, detail="Content rating exceeds your preference.")
+
+    clone = Character(
+        name=f"{source.name} (clone)",
+        short_description=source.short_description,
+        backstory=source.backstory,
+        avatar_emoji=source.avatar_emoji,
+        aggression=source.aggression,
+        risk_tolerance=source.risk_tolerance,
+        patience=source.patience,
+        trash_talk=source.trash_talk,
+        target_elo=source.target_elo,
+        current_elo=source.target_elo,
+        floor_elo=source.target_elo,
+        max_elo=source.max_elo,
+        adaptive=source.adaptive,
+        opening_preferences=list(source.opening_preferences or []),
+        voice_descriptor=source.voice_descriptor,
+        quirks=source.quirks,
+        visibility=Visibility.PUBLIC,
+        content_rating=source.content_rating,
+        owner_id=player.id,
+        is_preset=False,
+        preset_key=None,
+        state=CharacterState.GENERATING_MEMORIES,
+        memory_generation_started_at=datetime.utcnow(),
+    )
+    session.add(clone)
+    session.commit()
+    session.refresh(clone)
+    background.add_task(_run_generation_bg, clone.id)
+    return RedirectResponse(url=f"/characters/{clone.id}", status_code=303)
+
+
+@router.post("/characters/{character_id}/regenerate")
+def regenerate_memories_html(
+    character_id: str,
+    background: BackgroundTasks,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    character = session.get(Character, character_id)
+    if character is None or character.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if character.is_preset:
+        raise HTTPException(status_code=403, detail="Presets cannot be regenerated.")
+    if character.owner_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your character.")
+
+    from app.models.memory import Memory, MemoryScope as MS
+
+    session.query(Memory).filter(
+        Memory.character_id == character_id,
+        Memory.scope.in_([MS.CHARACTER_LORE, MS.CROSS_PLAYER]),
+    ).delete(synchronize_session=False)
+    character.state = CharacterState.GENERATING_MEMORIES
+    character.memory_generation_started_at = datetime.utcnow()
+    character.memory_generation_error = None
+    session.commit()
+    background.add_task(_run_generation_bg, character_id)
+    return RedirectResponse(url=f"/characters/{character_id}", status_code=303)
+
+
+# ------------------------------ Matches ------------------------------
+
+
+@router.post("/play/{character_id}")
+async def start_match_html(
+    character_id: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    character = session.get(Character, character_id)
+    if character is None or character.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if character.visibility == Visibility.PRIVATE and character.owner_id != player.id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if not rating_allowed(character.content_rating, player.max_content_rating):
+        raise HTTPException(status_code=403, detail="Content rating exceeds your preference.")
 
     try:
         match = match_service.create_match(
@@ -227,23 +612,24 @@ async def start_match_html(
         session.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    redirect.headers["location"] = f"/matches/{match.id}"
-    return redirect
+    return RedirectResponse(url=f"/matches/{match.id}", status_code=303)
 
 
 @router.get("/matches/{match_id}", response_class=HTMLResponse)
 def match_page(
     request: Request,
     match_id: str,
+    player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     match = session.get(Match, match_id)
-    if match is None:
+    if match is None or match.player_id != player.id:
         raise HTTPException(status_code=404, detail="Match not found")
     character = session.get(Character, match.character_id)
 
     moves = [
-        MoveRead.model_validate(m).model_dump(mode="json") for m in sorted(match.moves, key=lambda m: m.move_number)
+        MoveRead.model_validate(m).model_dump(mode="json")
+        for m in sorted(match.moves, key=lambda m: m.move_number)
     ]
 
     engines = available_engines()
@@ -253,10 +639,81 @@ def match_page(
         request,
         "play.html",
         {
+            "player": player,
             "match": match,
             "character": character,
             "moves_json": moves,
             "engines_available": engines,
             "has_real_engine": bool(real_engines),
+        },
+    )
+
+
+@router.get("/matches/{match_id}/summary", response_class=HTMLResponse)
+def match_summary_page(
+    request: Request,
+    match_id: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    from app.matches.service import player_outcome
+    from app.models.match import MatchAnalysis, OpponentProfile
+    from app.models.memory import Memory
+    from app.post_match.elo_apply import compute_elo_delta
+
+    match = session.get(Match, match_id)
+    if match is None or match.player_id != player.id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    character = session.get(Character, match.character_id)
+
+    analysis = session.execute(
+        select(MatchAnalysis).where(MatchAnalysis.match_id == match_id)
+    ).scalar_one_or_none()
+
+    generated_memories: list = []
+    if analysis and analysis.generated_memory_ids:
+        generated_memories = list(
+            session.execute(
+                select(Memory).where(Memory.id.in_(list(analysis.generated_memory_ids)))
+            ).scalars()
+        )
+
+    profile = session.execute(
+        select(OpponentProfile).where(
+            OpponentProfile.character_id == match.character_id,
+            OpponentProfile.player_id == match.player_id,
+        )
+    ).scalar_one_or_none()
+
+    elo_breakdown = None
+    if analysis and analysis.elo_delta_raw is not None:
+        moves = (analysis.engine_analysis or {}).get("moves") or []
+        comp = compute_elo_delta(match=match, analysis_moves=moves)
+        elo_breakdown = {
+            "outcome": int(comp.outcome_delta),
+            "move_quality": round(comp.move_quality_delta, 1),
+            "raw": round(comp.elo_delta_raw, 1),
+            "short_halved": comp.short_match_halved,
+            "rage_quit": comp.rage_quit_skipped_quality,
+        }
+
+    return templates.TemplateResponse(
+        request,
+        "summary.html",
+        {
+            "player": player,
+            "match": match,
+            "character": character,
+            "player_outcome": player_outcome(match),
+            "char_color": "black" if match.player_color.value == "white" else "white",
+            "elo_before": match.character_elo_at_start,
+            "elo_after": match.character_elo_at_end or match.character_elo_at_start,
+            "elo_delta_applied": analysis.elo_delta_applied if analysis else None,
+            "floor_raised": bool(analysis.floor_raised) if analysis else False,
+            "elo_breakdown": elo_breakdown,
+            "critical_moments": list(analysis.critical_moments or []) if analysis else [],
+            "generated_memories": generated_memories,
+            "narrative_summary": profile.narrative_summary if profile else None,
+            "analysis_status": analysis.status.value if analysis else "none",
         },
     )

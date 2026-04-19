@@ -9,13 +9,28 @@
 {% endblock %}
 
 {% block content %}
+{% macro rating_badge(r) %}
+  {% set val = r.value if r.value is defined else r %}
+  {% if val == 'family' %}
+    <span class="text-[10px] uppercase tracking-wider bg-emerald-900/60 text-emerald-200 rounded px-1.5 py-0.5">Family</span>
+  {% elif val == 'mature' %}
+    <span class="text-[10px] uppercase tracking-wider bg-amber-900/60 text-amber-200 rounded px-1.5 py-0.5">Mature</span>
+  {% elif val == 'unrestricted' %}
+    <span class="text-[10px] uppercase tracking-wider bg-rose-900/60 text-rose-200 rounded px-1.5 py-0.5">Unrestricted</span>
+  {% endif %}
+{% endmacro %}
+
 <div class="flex items-start gap-6">
   <div class="text-6xl">{{ character.avatar_emoji or "♟" }}</div>
   <div class="flex-1">
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-3 flex-wrap">
       <h1 class="text-3xl font-semibold">{{ character.name }}</h1>
       {% if character.is_preset %}
       <span class="text-[10px] uppercase tracking-wider bg-neutral-800 text-neutral-300 rounded px-1.5 py-0.5">Preset</span>
+      {% endif %}
+      {{ rating_badge(character.content_rating) }}
+      {% if character.visibility.value == 'private' %}
+      <span class="text-[10px] uppercase tracking-wider bg-neutral-700 text-neutral-200 rounded px-1.5 py-0.5">Private</span>
       {% endif %}
       {% if is_generating %}
       <span class="text-xs bg-amber-900/60 text-amber-200 rounded px-2 py-0.5 animate-pulse">Generating memories…</span>
@@ -26,17 +41,42 @@
       {% endif %}
     </div>
     <p class="text-neutral-300 mt-1">{{ character.short_description }}</p>
+    <div class="mt-1 text-xs text-neutral-500">
+      {% if character.is_preset %}
+        System character
+      {% elif is_owner %}
+        Your character
+      {% elif owner_username %}
+        @{{ owner_username }}'s character
+      {% endif %}
+    </div>
     <div class="mt-3 text-sm text-neutral-400">
       <span>Current {{ character.current_elo }} / floor {{ character.floor_elo }} / max {{ character.max_elo }} Elo</span>
       {% if character.adaptive %} · <span>adaptive</span>{% endif %}
       {% if character.voice_descriptor %} · <span class="italic">{{ character.voice_descriptor }}</span>{% endif %}
     </div>
   </div>
-  <div>
+  <div class="flex flex-col gap-2 items-end">
     {% if not is_generating %}
     <form method="post" action="/play/{{ character.id }}">
       <button class="rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
         ▶ Play
+      </button>
+    </form>
+    {% endif %}
+    {% if is_owner and not character.is_preset %}
+    <div class="flex gap-2 text-xs">
+      <a href="/characters/{{ character.id }}/edit"
+         class="rounded border border-neutral-700 text-neutral-200 px-3 py-1 hover:bg-neutral-800">Edit</a>
+      <form method="post" action="/characters/{{ character.id }}/delete"
+            onsubmit="return confirm('Delete {{ character.name }}? This is a soft delete.');">
+        <button class="rounded border border-rose-800 text-rose-300 px-3 py-1 hover:bg-rose-950">Delete</button>
+      </form>
+    </div>
+    {% elif not is_owner %}
+    <form method="post" action="/characters/{{ character.id }}/clone">
+      <button class="text-xs rounded border border-neutral-700 text-neutral-200 px-3 py-1 hover:bg-neutral-800">
+        Clone
       </button>
     </form>
     {% endif %}
@@ -47,6 +87,13 @@
 <div class="mt-6 rounded border border-rose-900/80 bg-rose-950/40 p-4 text-sm text-rose-200">
   <div class="font-semibold mb-1">Memory generation failed</div>
   <code class="text-xs">{{ character.memory_generation_error }}</code>
+  {% if is_owner %}
+  <form method="post" action="/characters/{{ character.id }}/regenerate" class="mt-3">
+    <button class="text-xs rounded bg-amber-600 text-neutral-900 px-3 py-1 hover:bg-amber-500">
+      Try again
+    </button>
+  </form>
+  {% endif %}
 </div>
 {% endif %}
 

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Character hidden — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto text-center py-16">
+  <div class="text-5xl mb-4">🛡</div>
+  <h1 class="text-2xl font-semibold mb-2">Hidden by your content preference</h1>
+  <p class="text-sm text-neutral-400 mb-6">
+    This character is rated <strong>{{ character_rating }}</strong>, which is above your
+    current <strong>{{ player.max_content_rating.value }}</strong> preference.
+  </p>
+  <a href="/settings" class="inline-block rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
+    Change content preference
+  </a>
+  <div class="mt-3">
+    <a href="/" class="text-sm text-neutral-400 hover:text-white">← Back to characters</a>
+  </div>
+</div>
+{% endblock %}

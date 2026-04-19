@@ -28,6 +28,8 @@ def _upsert_preset(spec: PresetSpec) -> tuple[str, bool]:
         if existing is not None:
             return existing.id, False
 
+        from app.models.character import Visibility
+
         char = Character(
             name=spec.name,
             short_description=spec.short_description,
@@ -47,6 +49,9 @@ def _upsert_preset(spec: PresetSpec) -> tuple[str, bool]:
             quirks=spec.quirks,
             is_preset=True,
             preset_key=spec.preset_key,
+            owner_id=None,  # presets are system-owned
+            visibility=Visibility.PUBLIC,
+            content_rating=spec.content_rating,
             state=CharacterState.GENERATING_MEMORIES,
             memory_generation_started_at=datetime.utcnow(),
         )

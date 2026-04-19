@@ -74,6 +74,53 @@
     </div>
   </fieldset>
 
+  <fieldset class="space-y-3 rounded border border-neutral-800 p-4">
+    <legend class="px-2 text-sm text-neutral-300">Visibility</legend>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="visibility" value="public" checked class="mt-1 accent-emerald-400" />
+      <div>
+        <div class="text-sm">Public</div>
+        <div class="text-xs text-neutral-500">Anyone can see and play this character.</div>
+      </div>
+    </label>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="visibility" value="private" class="mt-1 accent-emerald-400" />
+      <div>
+        <div class="text-sm">Private</div>
+        <div class="text-xs text-neutral-500">Only you can see and play this character.</div>
+      </div>
+    </label>
+  </fieldset>
+
+  <fieldset class="space-y-3 rounded border border-neutral-800 p-4">
+    <legend class="px-2 text-sm text-neutral-300">Content rating</legend>
+    <p class="text-xs text-neutral-500">
+      Determines the tone the LLM is allowed to use when generating memories and speaking as
+      this character. Players filter their character list by this rating.
+    </p>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="content_rating" value="family" checked class="mt-1 accent-emerald-400" />
+      <div>
+        <div class="text-sm">Family</div>
+        <div class="text-xs text-neutral-500">Kid-friendly. No swearing, no adult themes.</div>
+      </div>
+    </label>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="content_rating" value="mature" class="mt-1 accent-emerald-400" />
+      <div>
+        <div class="text-sm">Mature</div>
+        <div class="text-xs text-neutral-500">Adult tone allowed. Mild swearing, adult humor. No explicit content.</div>
+      </div>
+    </label>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="content_rating" value="unrestricted" class="mt-1 accent-emerald-400" />
+      <div>
+        <div class="text-sm">Unrestricted</div>
+        <div class="text-xs text-neutral-500">You take responsibility for the tone. The LLM still refuses genuinely harmful content.</div>
+      </div>
+    </label>
+  </fieldset>
+
   <div>
     <label class="block text-sm mb-1">Opening preferences</label>
     <select name="opening_preferences" multiple size="10" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm">

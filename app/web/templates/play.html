@@ -12,16 +12,34 @@
   .white-1e1d7 { background-color: #e6e6e6 !important; }
   .black-3c85d { background-color: #525866 !important; }
   .highlight-last { box-shadow: inset 0 0 0 3px rgba(16, 185, 129, 0.8); }
+
+  /* Memory ribbon: subtle glimpse, expandable on hover. */
+  .memory-ribbon {
+    transition: opacity 0.8s ease-in-out;
+  }
+  .memory-ribbon.fading { opacity: 0.35; }
+  .memory-detail { display: none; }
+  .memory-item:hover .memory-detail { display: block; }
+  .memory-item.expanded .memory-detail { display: block; }
+
+  /* Chat bubbles. */
+  .chat-bubble-agent {
+    background: linear-gradient(180deg, rgba(71,85,105,0.35), rgba(51,65,85,0.25));
+    border-left: 2px solid #60a5fa;
+  }
+  .chat-bubble-player {
+    background: linear-gradient(180deg, rgba(29,78,216,0.2), rgba(29,78,216,0.1));
+    border-left: 2px solid #f59e0b;
+    margin-left: 1.5rem;
+  }
 </style>
 {% endblock %}
 
 {% block content %}
 
-{# Top-of-page alert region. JS owns visibility + content. On page load we
-   seed it from server-side state (mock-only = amber; healthy = hidden). #}
 <div id="alert-banner" class="hidden mb-5 rounded border px-4 py-3 text-sm"></div>
 
-<div class="flex items-start gap-6 mb-6">
+<div class="flex items-start gap-6 mb-4">
   <div class="text-5xl">{{ character.avatar_emoji or "♟" }}</div>
   <div class="flex-1">
     <h1 class="text-2xl font-semibold">{{ character.name }}</h1>
@@ -29,6 +47,10 @@
       {{ character.short_description }}
       · playing at ~{{ match.character_elo_at_start }} Elo
       · you're <span id="player-color">{{ match.player_color.value }}</span>
+    </p>
+    {# Emotion indicator — updates each agent turn. #}
+    <p class="text-xs text-neutral-500 mt-1">
+      mood: <span id="emotion-indicator" class="font-medium text-neutral-300">—</span>
     </p>
   </div>
   <div class="text-right text-sm">
@@ -47,24 +69,54 @@
   </div>
 </div>
 
-<div class="grid grid-cols-1 md:grid-cols-[minmax(0,480px)_minmax(0,1fr)] gap-6">
+<div class="grid grid-cols-1 lg:grid-cols-[minmax(0,480px)_minmax(0,1fr)] gap-6">
   <div>
     <div id="board" class="w-full max-w-[480px]"></div>
     <div class="mt-3 flex items-center gap-3">
       <button id="resign-btn" class="rounded bg-rose-900 hover:bg-rose-800 px-3 py-1.5 text-sm">Resign</button>
       <div id="thinking-banner" class="text-sm text-amber-300 hidden">{{ character.name }} is thinking…</div>
     </div>
+    {# Memory ribbon. Hidden by default; appears when a memory is surfaced. #}
+    <div id="memory-ribbon" class="hidden mt-4 text-sm italic text-neutral-400 border-l-2 border-indigo-700/60 pl-3 memory-ribbon">
+      <span id="memory-ribbon-lede">{{ character.name }} is reminded of something…</span>
+      <div id="memory-ribbon-items" class="mt-2 space-y-2"></div>
+    </div>
   </div>
 
-  <div>
-    <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-2">Moves</h2>
-    <ol id="move-list" class="text-sm font-mono text-neutral-200 bg-neutral-900 border border-neutral-800 rounded p-4 h-[480px] overflow-y-auto">
-    </ol>
+  <div class="flex flex-col gap-4 min-h-[480px]">
+    {# Chat log. Reads from persisted moves + live response. #}
+    <div>
+      <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-2">Table talk</h2>
+      <div id="chat-log" class="text-sm text-neutral-200 bg-neutral-900 border border-neutral-800 rounded p-4 h-[220px] overflow-y-auto space-y-2">
+        <div class="text-xs text-neutral-500 italic">No messages yet. Type one to {{ character.name }} and it'll be attached to your next move.</div>
+      </div>
+      <div class="mt-2 flex gap-2">
+        <input id="chat-input" type="text" maxlength="500" placeholder="Say something to {{ character.name }} with your next move…"
+               class="flex-1 rounded bg-neutral-900 border border-neutral-800 px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-600" />
+        <span id="chat-staged-indicator" class="text-xs text-neutral-500 italic self-center hidden">queued</span>
+      </div>
+    </div>
+
+    {# Move list. #}
+    <div>
+      <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-2">Moves</h2>
+      <ol id="move-list" class="text-sm font-mono text-neutral-200 bg-neutral-900 border border-neutral-800 rounded p-4 h-[220px] overflow-y-auto">
+      </ol>
+    </div>
   </div>
+</div>
+
+{# Post-match progress panel: hidden until game ends, then polls and redirects. #}
+<div id="postmatch-panel" class="hidden mt-6 rounded border border-indigo-800/60 bg-indigo-950/30 px-4 py-3 text-sm">
+  <div class="font-medium text-indigo-200 mb-2">
+    <span id="postmatch-headline">{{ character.name }} is reflecting on the match…</span>
+  </div>
+  <ul id="postmatch-steps" class="text-xs text-indigo-300 space-y-0.5"></ul>
 </div>
 
 <script>
   const MATCH_ID = {{ match.id | tojson }};
+  const CHARACTER_NAME = {{ character.name | tojson }};
   const PLAYER_COLOR = {{ match.player_color.value | tojson }};
   const INITIAL_FEN = {{ match.current_fen | tojson }};
   const INITIAL_STATUS = {{ match.status.value | tojson }};
@@ -74,10 +126,19 @@
 
   const game = new Chess(INITIAL_FEN);
   let gameOver = INITIAL_STATUS !== "in_progress";
-  // `movesBlocked` gates drag + submit. Starts true if no real engine is
-  // installed; the API would reject the move anyway, but blocking client-side
-  // gives a clear "nothing to fight" signal.
   let movesBlocked = !HAS_REAL_ENGINE;
+  let stagedChat = "";  // message typed by the player, sent with next move.
+
+  const EMOTION_COLORS = {
+    neutral:   "text-neutral-300",
+    pleased:   "text-emerald-300",
+    annoyed:   "text-amber-400",
+    excited:   "text-cyan-300",
+    focused:   "text-indigo-300",
+    uncertain: "text-neutral-400",
+    smug:      "text-purple-300",
+    deflated:  "text-rose-300",
+  };
 
   const BANNER_STYLES = {
     error:   { cls: 'border-rose-700 bg-rose-950/60 text-rose-100',     prefix: '⚠ ' },
@@ -92,15 +153,25 @@
     el.textContent = style.prefix + message;
     el.classList.remove('hidden');
   }
-
   function hideBanner() {
     const el = document.getElementById('alert-banner');
     el.classList.add('hidden');
     el.textContent = '';
   }
-
   function setThinking(on) {
     document.getElementById('thinking-banner').classList.toggle('hidden', !on);
+  }
+
+  function setEmotion(emotion, intensity) {
+    const el = document.getElementById('emotion-indicator');
+    if (!emotion) {
+      el.textContent = "—";
+      el.className = "font-medium text-neutral-300";
+      return;
+    }
+    const color = EMOTION_COLORS[emotion] || "text-neutral-300";
+    const dots = intensity >= 0.7 ? "●●●" : intensity >= 0.4 ? "●●○" : "●○○";
+    el.innerHTML = `<span class="${color}">${emotion}</span> <span class="text-neutral-600 text-[10px]">${dots}</span>`;
   }
 
   const board = Chessboard('board', {
@@ -140,6 +211,67 @@
     ol.scrollTop = ol.scrollHeight;
   }
 
+  function addChatBubble(who, text) {
+    if (!text) return;
+    const log = document.getElementById('chat-log');
+    // Remove placeholder on first real message.
+    const placeholder = log.querySelector('.italic.text-neutral-500');
+    if (placeholder && log.children.length === 1) log.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = who === 'agent'
+      ? 'chat-bubble-agent rounded py-2 px-3'
+      : 'chat-bubble-player rounded py-2 px-3';
+    const speakerLabel = who === 'agent' ? CHARACTER_NAME : 'You';
+    div.innerHTML = `<span class="text-xs uppercase tracking-wider text-neutral-500">${speakerLabel}</span>
+                     <div class="text-sm mt-0.5">${escapeHtml(text)}</div>`;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  function showMemoryRibbon(memories) {
+    const ribbon = document.getElementById('memory-ribbon');
+    const items = document.getElementById('memory-ribbon-items');
+    if (!memories || memories.length === 0) {
+      // Keep it on screen for a beat, then fade. (Slight continuity.)
+      ribbon.classList.add('fading');
+      setTimeout(() => ribbon.classList.add('hidden'), 3000);
+      return;
+    }
+    items.innerHTML = '';
+    ribbon.classList.remove('hidden', 'fading');
+    for (const m of memories) {
+      const cachedTag = m.from_cache ? '<span class="text-[10px] text-neutral-600 ml-1">(still on mind)</span>' : '';
+      const el = document.createElement('div');
+      el.className = 'memory-item cursor-pointer';
+      el.innerHTML = `
+        <div class="flex items-baseline gap-2">
+          <span class="text-neutral-400">…</span>
+          <span class="text-neutral-300">${escapeHtml(m.retrieval_reason || 'a memory stirs')}</span>
+          ${cachedTag}
+        </div>
+        <div class="memory-detail text-neutral-400 text-xs italic pl-4 mt-1 border-l border-indigo-900/60">
+          "${escapeHtml(m.narrative_text)}"
+        </div>
+      `;
+      el.addEventListener('click', () => el.classList.toggle('expanded'));
+      items.appendChild(el);
+    }
+  }
+
+  // Build the chat log from the moves we already have (page load).
+  function seedChatLogFromMoves(moves) {
+    for (const m of moves) {
+      if (m.player_chat_before) addChatBubble('player', m.player_chat_before);
+      if (m.agent_chat_after) addChatBubble('agent', m.agent_chat_after);
+    }
+  }
+
   function renderStatus(match, outcome) {
     const status = document.getElementById('match-status');
     const result = document.getElementById('match-result');
@@ -150,6 +282,7 @@
       status.innerHTML = '<span class="text-amber-300">Finished</span>';
       result.textContent = `${match.result || 'unknown'} — you ${outcome || '?'}`;
       gameOver = true;
+      startPostMatchPolling();
     }
   }
 
@@ -161,17 +294,18 @@
     }
     hideBanner();
     setThinking(true);
+    const chatToSend = stagedChat;
     try {
       const res = await fetch(`/api/matches/${MATCH_ID}/move`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({uci}),
+        body: JSON.stringify({uci, chat: chatToSend || null}),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({detail: res.statusText}));
         if (res.status === 503) {
           movesBlocked = true;
-          showBanner('error', `Chess engine unavailable: ${err.detail || 'unknown error'}. Drag disabled — check the server logs and restart when resolved.`);
+          showBanner('error', `Chess engine unavailable: ${err.detail || 'unknown error'}.`);
         } else if (res.status === 400 || res.status === 409) {
           showBanner('warn', err.detail || 'Move rejected');
         } else {
@@ -183,6 +317,13 @@
         return;
       }
       const body = await res.json();
+      // Player chat landed on the Move — mirror to the chat log.
+      if (chatToSend) {
+        addChatBubble('player', chatToSend);
+        stagedChat = "";
+        document.getElementById('chat-input').value = "";
+        document.getElementById('chat-staged-indicator').classList.add('hidden');
+      }
       if (body.agent_move) {
         game.move({
           from: body.agent_move.uci.slice(0,2),
@@ -191,6 +332,13 @@
         });
       }
       board.position(game.fen());
+
+      // Render Soul output.
+      if (body.agent_turn) {
+        if (body.agent_turn.speak) addChatBubble('agent', body.agent_turn.speak);
+        setEmotion(body.agent_turn.emotion, body.agent_turn.emotion_intensity);
+        showMemoryRibbon(body.agent_turn.surfaced_memories || []);
+      }
       await refreshMoves();
       renderStatus(body.match, body.outcome);
     } catch (exc) {
@@ -209,6 +357,23 @@
     renderMoves(body.items);
   }
 
+  // --- Chat input wiring -------------------------------------------------
+
+  const chatInput = document.getElementById('chat-input');
+  chatInput.addEventListener('input', (ev) => {
+    stagedChat = ev.target.value || "";
+    document.getElementById('chat-staged-indicator').classList.toggle('hidden', !stagedChat);
+  });
+  chatInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      // Don't auto-submit a move; just stage.
+      ev.preventDefault();
+      chatInput.blur();
+    }
+  });
+
+  // --- Resign ------------------------------------------------------------
+
   document.getElementById('resign-btn').addEventListener('click', async () => {
     if (gameOver) return;
     if (!confirm('Resign this match?')) return;
@@ -219,9 +384,82 @@
     }
   });
 
-  renderMoves(INITIAL_MOVES);
+  // --- Post-match polling ------------------------------------------------
 
-  // Startup banner: warn when only the fallback engine is installed.
+  let postMatchTimer = null;
+  const POLL_INTERVAL_MS = 2000;
+  const STEP_LABELS = {
+    engine_analysis:     "Analyzing every move",
+    feature_extraction:  "Extracting your style",
+    elo_ratchet:         "Adjusting Elo",
+    memory_generation:   "Forming memories",
+    narrative_summary:   "Writing a note about you",
+  };
+  const ALL_STEPS = [
+    "engine_analysis",
+    "feature_extraction",
+    "elo_ratchet",
+    "memory_generation",
+    "narrative_summary",
+  ];
+
+  function renderPostMatchSteps(completed) {
+    const ul = document.getElementById('postmatch-steps');
+    ul.innerHTML = '';
+    for (const step of ALL_STEPS) {
+      const li = document.createElement('li');
+      const done = completed.includes(step);
+      li.innerHTML = done
+        ? `<span class="text-emerald-400">✓</span> ${STEP_LABELS[step]}`
+        : `<span class="text-neutral-500">○</span> <span class="text-neutral-500">${STEP_LABELS[step]}…</span>`;
+      ul.appendChild(li);
+    }
+  }
+
+  async function pollPostMatch() {
+    try {
+      const res = await fetch(`/api/matches/${MATCH_ID}/post_match_status`);
+      if (!res.ok) return;
+      const body = await res.json();
+      renderPostMatchSteps(body.steps_completed || []);
+      if (body.status === 'completed') {
+        clearInterval(postMatchTimer);
+        document.getElementById('postmatch-headline').textContent = 'Done. Redirecting to the summary…';
+        setTimeout(() => { window.location.href = `/matches/${MATCH_ID}/summary`; }, 1200);
+      } else if (body.status === 'failed') {
+        clearInterval(postMatchTimer);
+        document.getElementById('postmatch-headline').textContent = 'Post-match processing failed. See server logs.';
+      }
+    } catch (exc) {
+      // Swallow — keep polling.
+    }
+  }
+
+  function startPostMatchPolling() {
+    if (postMatchTimer) return;
+    document.getElementById('postmatch-panel').classList.remove('hidden');
+    renderPostMatchSteps([]);
+    postMatchTimer = setInterval(pollPostMatch, POLL_INTERVAL_MS);
+    pollPostMatch();  // immediate first check
+  }
+
+  // --- Init --------------------------------------------------------------
+
+  renderMoves(INITIAL_MOVES);
+  seedChatLogFromMoves(INITIAL_MOVES);
+
+  // If the last persisted move has mood_snapshot, seed the emotion indicator
+  // with something (we don't have emotion persisted yet, but mood gives a hint).
+  const lastAgentMove = [...INITIAL_MOVES].reverse().find(m => m.side !== PLAYER_COLOR);
+  if (lastAgentMove && lastAgentMove.mood_snapshot) {
+    // No emotion on the row, just keep neutral placeholder.
+    setEmotion("neutral", 0.2);
+  }
+
+  // If we land on a page where the game is already over, start the post-match
+  // poll immediately — the thread may still be running or already done.
+  if (gameOver) startPostMatchPolling();
+
   if (!HAS_REAL_ENGINE) {
     showBanner(
       'warn',

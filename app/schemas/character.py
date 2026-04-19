@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.character import CharacterState
+from app.models.character import CharacterState, ContentRating, Visibility
 
 
 class CharacterCreate(BaseModel):
@@ -26,6 +26,9 @@ class CharacterCreate(BaseModel):
     opening_preferences: list[str] = Field(default_factory=list)
     voice_descriptor: str = Field("", max_length=280)
     quirks: str = Field("", max_length=4000)
+
+    visibility: Visibility = Visibility.PUBLIC
+    content_rating: ContentRating = ContentRating.FAMILY
 
     @field_validator("opening_preferences")
     @classmethod
@@ -72,6 +75,9 @@ class CharacterSummary(BaseModel):
     floor_elo: int
     max_elo: int
     adaptive: bool
+    owner_id: str | None = None
+    visibility: Visibility = Visibility.PUBLIC
+    content_rating: ContentRating = ContentRating.FAMILY
     created_at: datetime
 
 
@@ -104,8 +110,50 @@ class CharacterRead(BaseModel):
     memory_generation_error: str | None
     is_preset: bool
 
+    owner_id: str | None = None
+    visibility: Visibility = Visibility.PUBLIC
+    content_rating: ContentRating = ContentRating.FAMILY
+
     created_at: datetime
     updated_at: datetime
+
+
+class CharacterUpdate(BaseModel):
+    """Owner-editable fields (via PATCH /api/characters/{id}).
+
+    Editing `backstory` does NOT regenerate memories — that's an explicit
+    separate action (`POST /api/characters/{id}/regenerate_memories`).
+    """
+
+    short_description: str | None = Field(None, max_length=280)
+    backstory: str | None = Field(None, max_length=8000)
+    avatar_emoji: str | None = Field(None, max_length=8)
+
+    aggression: int | None = Field(None, ge=1, le=10)
+    risk_tolerance: int | None = Field(None, ge=1, le=10)
+    patience: int | None = Field(None, ge=1, le=10)
+    trash_talk: int | None = Field(None, ge=1, le=10)
+
+    opening_preferences: list[str] | None = None
+    voice_descriptor: str | None = Field(None, max_length=280)
+    quirks: str | None = Field(None, max_length=4000)
+
+    visibility: Visibility | None = None
+    content_rating: ContentRating | None = None
+
+    @field_validator("opening_preferences")
+    @classmethod
+    def _clean_openings(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        seen: set[str] = set()
+        out: list[str] = []
+        for item in v:
+            s = item.strip()
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
 
 
 class CharacterDetail(CharacterRead):

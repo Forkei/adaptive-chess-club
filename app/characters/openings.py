@@ -119,3 +119,77 @@ def all_group_names() -> list[OpeningGroup]:
         "hypermodern",
         "unorthodox",
     ]
+
+
+# --- Phase 2b: coarse opening classifier ----------------------------------
+#
+# The curated OPENINGS list above has names + ECO codes but no move
+# sequences. Rather than expand it (significant manual data entry) or
+# pull in a polyglot book dependency, we ship a compact heuristic
+# classifier keyed by SAN prefix. This covers the overwhelming majority
+# of common openings at the family level. Matches that miss fall
+# through to "unknown" — a legitimate signal on its own.
+#
+# TODO Phase 3: add a real opening book (python-chess supports polyglot)
+# for ECO-code-level precision if that becomes useful. The 1.x.y prefix
+# matching here bottoms out at the family level.
+
+_CLASSIFIER_TABLE: list[tuple[tuple[str, ...], str, str, OpeningGroup]] = [
+    # (san_prefix_tuple, eco, name, group)
+    (("e4", "e5"),           "C20", "King's Pawn Game",        "king_pawn_open"),
+    (("e4", "c5"),           "B20", "Sicilian Defense",        "king_pawn_open"),
+    (("e4", "e6"),           "C00", "French Defense",          "king_pawn_open"),
+    (("e4", "c6"),           "B10", "Caro-Kann Defense",       "king_pawn_open"),
+    (("e4", "d5"),           "B01", "Scandinavian Defense",    "king_pawn_open"),
+    (("e4", "Nf6"),          "B02", "Alekhine Defense",        "hypermodern"),
+    (("e4", "d6"),           "B07", "Pirc Defense",            "hypermodern"),
+    (("e4", "g6"),           "B06", "Modern Defense",          "hypermodern"),
+    (("d4", "d5"),           "D00", "Queen's Pawn Game",       "queen_pawn_closed"),
+    (("d4", "Nf6"),          "E60", "Indian Defense",          "indian"),
+    (("d4", "f5"),           "A80", "Dutch Defense",           "hypermodern"),
+    (("d4", "e6"),           "A40", "Queen's Pawn, e6 Systems", "queen_pawn_closed"),
+    (("d4", "g6"),           "A40", "Modern Defense vs d4",    "hypermodern"),
+    (("c4",),                "A10", "English Opening",         "flank"),
+    (("Nf3",),               "A04", "Reti Opening",            "flank"),
+    (("b3",),                "A00", "Larsen's Opening",        "flank"),
+    (("f4",),                "A02", "Bird's Opening",          "flank"),
+    (("g3",),                "A00", "King's Fianchetto",       "flank"),
+    (("g4",),                "A00", "Grob's Attack",           "unorthodox"),
+    (("b4",),                "A00", "Polish Opening",          "unorthodox"),
+    (("e4", "e5", "Nf3", "Nc6", "Bb5"),  "C60", "Ruy Lopez",         "king_pawn_open"),
+    (("e4", "e5", "Nf3", "Nc6", "Bc4"),  "C50", "Italian Game",       "king_pawn_open"),
+    (("e4", "e5", "f4"),                 "C30", "King's Gambit",      "gambit"),
+    (("d4", "d5", "c4"),                 "D06", "Queen's Gambit",     "queen_pawn_closed"),
+    (("d4", "Nf6", "c4", "g6"),          "E60", "King's Indian Defense", "indian"),
+    (("d4", "Nf6", "c4", "e6"),          "E20", "Nimzo-Indian Defense",  "indian"),
+    (("d4", "d5", "Nc3"),                "D00", "Blackmar-Diemer Gambit", "gambit"),
+]
+
+
+def classify_opening(san_moves: list[str]) -> dict[str, str | None]:
+    """Classify an opening by its first few SAN half-moves.
+
+    Returns `{"eco": str, "name": str, "group": str}` — with all three
+    set to `"unknown"` if no pattern matches. The longest matching
+    prefix wins, so "e4 e5 f4" classifies as King's Gambit (gambit) not
+    King's Pawn Game.
+
+    Not ECO-code-perfect — see note at top of _CLASSIFIER_TABLE. Good
+    enough for style-feature aggregation across matches.
+    """
+    if not san_moves:
+        return {"eco": "unknown", "name": "unknown", "group": "unknown"}
+
+    best: tuple[tuple[str, ...], str, str, OpeningGroup] | None = None
+    for entry in _CLASSIFIER_TABLE:
+        prefix, _eco, _name, _group = entry
+        if len(san_moves) < len(prefix):
+            continue
+        if tuple(san_moves[: len(prefix)]) == prefix:
+            if best is None or len(prefix) > len(best[0]):
+                best = entry
+
+    if best is None:
+        return {"eco": "unknown", "name": "unknown", "group": "unknown"}
+    _, eco, name, group = best
+    return {"eco": eco, "name": name, "group": group}

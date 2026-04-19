@@ -1,33 +1,44 @@
-"""Cookie-based anonymous players.
+"""Player-related API endpoints.
 
-No auth. `POST /api/players` returns a Player and sets a `player_id`
-cookie. `GET /api/players/me` reads that cookie and returns the row;
-if the cookie is missing/unknown, it returns 404 — clients should then
-call POST.
+Phase 3a replaces the anonymous-cookie model with username-based login.
+- `POST /api/players` is kept for back-compat with older clients: it now
+  auto-generates a guest username and sets the cookie.
+- `GET /api/me` returns the current player (401 if no cookie) — the
+  canonical endpoint going forward.
+- `GET /api/players/me` stays as an alias for back-compat but behaves
+  identically.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
+from app.auth import (
+    COOKIE_MAX_AGE,
+    PLAYER_COOKIE,
+    generate_guest_username,
+    require_player,
+)
 from app.db import get_session
 from app.models.match import Player
 from app.schemas.match import PlayerCreate, PlayerRead
 
-router = APIRouter(prefix="/api/players", tags=["players"])
-
-PLAYER_COOKIE = "player_id"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # one year
+router = APIRouter(tags=["players"])
 
 
-@router.post("", response_model=PlayerRead)
+@router.post("/api/players", response_model=PlayerRead)
 def create_player(
     payload: PlayerCreate,
     response: Response,
     session: Session = Depends(get_session),
 ) -> PlayerRead:
-    player = Player(display_name=payload.display_name)
+    """Create a guest player. Phase 3a: assigns an auto-generated
+    `guest_<short>` username so the row satisfies the new UNIQUE
+    constraint. Real usernames are claimed via POST /login.
+    """
+    username = generate_guest_username()
+    player = Player(username=username, display_name=payload.display_name)
     session.add(player)
     session.commit()
     session.refresh(player)
@@ -42,14 +53,12 @@ def create_player(
     return PlayerRead.model_validate(player)
 
 
-@router.get("/me", response_model=PlayerRead)
-def get_me(
-    player_id: str | None = Cookie(default=None, alias=PLAYER_COOKIE),
-    session: Session = Depends(get_session),
-) -> PlayerRead:
-    if not player_id:
-        raise HTTPException(status_code=404, detail="No player cookie set")
-    player = session.get(Player, player_id)
-    if player is None:
-        raise HTTPException(status_code=404, detail="Player not found")
+@router.get("/api/me", response_model=PlayerRead)
+def get_me(player: Player = Depends(require_player)) -> PlayerRead:
+    return PlayerRead.model_validate(player)
+
+
+@router.get("/api/players/me", response_model=PlayerRead)
+def get_players_me(player: Player = Depends(require_player)) -> PlayerRead:
+    """Back-compat alias for /api/me."""
     return PlayerRead.model_validate(player)

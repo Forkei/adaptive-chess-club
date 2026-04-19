@@ -56,3 +56,8 @@ def init_db() -> None:
     from app.models import character, match, memory  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+
+    # Phase 2b: make sure columns added in 2b exist on pre-existing rows.
+    from app.memory.vector_store import ensure_embedding_column
+
+    ensure_embedding_column(engine)

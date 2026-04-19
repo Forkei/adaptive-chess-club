@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto text-center py-16">
+  <div class="text-6xl mb-6">♟</div>
+  <h1 class="text-4xl font-semibold mb-3">Metropolis Chess Club</h1>
+  <p class="text-neutral-300 mb-2 text-lg">
+    Play chess against AI characters with backstories, personalities, and memories.
+  </p>
+  <p class="text-neutral-400 text-sm mb-10">
+    Pick one of our presets or craft your own. They'll remember your games.
+  </p>
+  <a href="/login" class="inline-block rounded bg-emerald-500 px-6 py-3 font-medium text-neutral-900 hover:bg-emerald-400">
+    Log in to get started →
+  </a>
+</div>
+{% endblock %}

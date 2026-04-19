@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from collections.abc import Iterable
 
@@ -9,10 +10,22 @@ from sqlalchemy.orm import Session
 from app.models.memory import Memory, MemoryScope, MemoryType
 from app.schemas.memory import MemoryCreate
 
+logger = logging.getLogger(__name__)
+
 
 def bulk_create(
-    session: Session, *, character_id: str, items: Iterable[MemoryCreate]
+    session: Session,
+    *,
+    character_id: str,
+    items: Iterable[MemoryCreate],
+    embed: bool = True,
 ) -> list[Memory]:
+    """Create memories and (by default) embed them in a single pass.
+
+    Embedding is best-effort: on failure we log and continue, leaving the
+    `embedding` column NULL for those rows so the backfill script can
+    pick them up later.
+    """
     rows = [
         Memory(
             character_id=character_id,
@@ -29,7 +42,40 @@ def bulk_create(
     ]
     session.add_all(rows)
     session.flush()
+
+    if embed and rows:
+        try:
+            from app.memory.embeddings import build_memory_embedding_input, embed_texts
+
+            inputs = [
+                build_memory_embedding_input(
+                    narrative_text=r.narrative_text,
+                    triggers=list(r.triggers or []),
+                    relevance_tags=list(r.relevance_tags or []),
+                )
+                for r in rows
+            ]
+            vectors = embed_texts(inputs)
+            for row, vec in zip(rows, vectors):
+                row.embedding = vec
+            session.flush()
+        except Exception as exc:
+            logger.warning(
+                "Inline embedding failed for %d memories (character=%s): %s. "
+                "Memories persisted without embeddings — run the backfill script.",
+                len(rows),
+                character_id,
+                exc,
+            )
+
     return rows
+
+
+def get_by_ids(session: Session, ids: Iterable[str]) -> list[Memory]:
+    id_list = list(ids)
+    if not id_list:
+        return []
+    return list(session.execute(select(Memory).where(Memory.id.in_(id_list))).scalars())
 
 
 def list_for_character(
