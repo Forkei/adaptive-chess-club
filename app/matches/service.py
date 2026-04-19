@@ -579,6 +579,7 @@ def resign(session: Session, *, match_id: str) -> Match:
     )
     match.ended_at = datetime.utcnow()
     match.character_elo_at_end = match.character_elo_at_start
+    _stash_trailing_pending_chat(match)
     session.flush()
     return match
 
@@ -592,8 +593,27 @@ def abandon_for_disconnect(session: Session, *, match_id: str) -> Match:
     match.result = MatchResult.ABANDONED
     match.ended_at = datetime.utcnow()
     match.character_elo_at_end = match.character_elo_at_start
+    _stash_trailing_pending_chat(match)
     session.flush()
     return match
+
+
+def _stash_trailing_pending_chat(match: Match) -> None:
+    """On abrupt match end, preserve any un-persisted pending player chat.
+
+    Moves anything in `extra_state.pending_player_chat` into `trailing_player_chat`
+    so post-match features (narrative summary, memory_gen) can still read the
+    final messages. Empties the pending buffer.
+    """
+    state = dict(match.extra_state or {})
+    pending = list(state.get("pending_player_chat", []))
+    if not pending:
+        return
+    trailing = list(state.get("trailing_player_chat", []))
+    trailing.extend(pending)
+    state["trailing_player_chat"] = trailing
+    state["pending_player_chat"] = []
+    match.extra_state = state
 
 
 # --- Outcome helpers for the API ---------------------------------------

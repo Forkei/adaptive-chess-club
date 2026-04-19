@@ -173,6 +173,103 @@ def test_pending_chat_fifo_eviction_by_total_chars(monkeypatch):
         assert total <= 10
 
 
+# --- Pending chat persistence on player move ------------------------------
+
+
+def test_pending_chat_persists_to_player_move_on_drain():
+    """Messages typed before a move should land on Move.player_chat_before.
+
+    Simulates the Phase 1 flow without spinning up the socket: calls the
+    streaming module's drain + merge helpers directly, then runs a player
+    move and asserts the Move row carries the merged chat.
+    """
+    import asyncio
+    import chess
+
+    from app.db import SessionLocal
+    from app.matches import streaming as stream
+    from app.matches import service as match_service
+    from app.matches.streaming import TurnEmitters
+
+    with SessionLocal() as sess:
+        p = _mk_player(sess, "pcp1")
+        c = _mk_character(sess)
+        m = _mk_match(sess, p, c)
+        # Two messages typed while waiting for the engine (or just before
+        # making a move).
+        _append_pending_chat(m, "are you even trying")
+        _append_pending_chat(m, "here goes e4")
+        sess.commit()
+        match_id = m.id
+
+    async def _go():
+        noop = lambda *_a, **_k: None
+
+        async def _async_noop(*_a, **_k):
+            return None
+
+        emitters = TurnEmitters(
+            on_player_move=_async_noop, on_thinking=_async_noop,
+            on_memory_surfaced=_async_noop, on_agent_move=_async_noop,
+            on_agent_chat=_async_noop, on_mood_update=_async_noop,
+            on_match_ended=_async_noop, on_post_match_kickoff=_async_noop,
+        )
+        # Only run Phase 1 — player move — then stop. Easiest way: force the
+        # engine path to fail fast. We do this by letting phase-2 run against
+        # the mock engine (always available in tests) and just checking the
+        # player Move row state after commit.
+        try:
+            await stream.apply_player_move_streamed(
+                match_id=match_id, uci="e2e4", player_chat=None, emitters=emitters,
+            )
+        except Exception:
+            # Phase 2 may fail in unit-test environments without engines — we
+            # only care about Phase 1's persistence side-effect here.
+            pass
+
+    asyncio.run(_go())
+
+    with SessionLocal() as sess:
+        match = sess.get(Match, match_id)
+        assert match is not None
+        # Find the player's move (side=WHITE, move_number=1).
+        player_move = next(mv for mv in match.moves if mv.move_number == 1)
+        # Both messages should be on the player move's player_chat_before.
+        assert player_move.player_chat_before is not None
+        assert "are you even trying" in player_move.player_chat_before
+        assert "here goes e4" in player_move.player_chat_before
+        # Separator is " / ".
+        assert " / " in player_move.player_chat_before
+        # Pending buffer was drained.
+        pending = (match.extra_state or {}).get("pending_player_chat", [])
+        assert pending == []
+
+
+def test_pending_chat_stashed_to_trailing_on_resign():
+    """Resign mid-thinking should preserve un-persisted chat to trailing_player_chat."""
+    with SessionLocal() as sess:
+        p = _mk_player(sess, "pcp2")
+        c = _mk_character(sess)
+        m = _mk_match(sess, p, c)
+        _append_pending_chat(m, "gg")
+        sess.commit()
+        match_id = m.id
+
+    from app.matches import service as match_service
+
+    with SessionLocal() as sess:
+        match_service.resign(sess, match_id=match_id)
+        sess.commit()
+
+    with SessionLocal() as sess:
+        match = sess.get(Match, match_id)
+        assert match is not None
+        pending = (match.extra_state or {}).get("pending_player_chat", [])
+        trailing = (match.extra_state or {}).get("trailing_player_chat", [])
+        assert pending == []
+        assert any(e.get("text") == "gg" for e in trailing)
+
+
 # --- Processor status callback --------------------------------------------
 
 

@@ -105,6 +105,16 @@ def _drain_pending_chat(match: Match) -> list[dict[str, Any]]:
     return pending
 
 
+def _join_pending_chat(pending: list[dict[str, Any]]) -> str | None:
+    """Join mid-thinking chat messages into a single transcript string.
+
+    Separator: ' / '. Returns None when no messages — so callers can assign
+    straight to a nullable Move.player_chat_before column.
+    """
+    texts = [entry.get("text", "") for entry in pending if entry.get("text")]
+    return " / ".join(texts) if texts else None
+
+
 def _finalize_outcome(match: Match, board: chess.Board) -> tuple[str, str, str | None] | None:
     """If the board terminated, set status/result on the match and return (reason, result, outcome).
 
@@ -212,6 +222,38 @@ def _head_to_head(profile: OpponentProfile | None) -> dict[str, int] | None:
 # --- Player move persistence ----------------------------------------------
 
 
+def _peek_pending_chat(match: Match) -> list[dict[str, Any]]:
+    """Read pending_player_chat without clearing it. Distinct from _drain_* which
+    empties the buffer."""
+    state = match.extra_state or {}
+    return list(state.get("pending_player_chat", []))
+
+
+def _merge_player_chat(pending: list[dict[str, Any]], inline: str | None) -> str | None:
+    """Combine mid-think buffered chat with any chat attached to the make_move event."""
+    texts = [entry.get("text", "") for entry in pending if entry.get("text")]
+    if inline:
+        texts.append(inline)
+    return " / ".join(texts) if texts else None
+
+
+def _stash_trailing_chat(match: Match, pending: list[dict[str, Any]]) -> None:
+    """Move any leftover pending chat into extra_state.trailing_player_chat.
+
+    Used when the match ends before the next player move could claim these
+    messages as its `player_chat_before`. The post-match pipeline can read
+    this if it wants the final words.
+    """
+    if not pending:
+        return
+    state = dict(match.extra_state or {})
+    trailing = list(state.get("trailing_player_chat", []))
+    trailing.extend(pending)
+    state["trailing_player_chat"] = trailing
+    state["pending_player_chat"] = []
+    match.extra_state = state
+
+
 def _persist_player_move(session, match: Match, uci: str, player_chat: str | None) -> Move:
     board = chess.Board(match.current_fen)
     player_color = chess.WHITE if match.player_color == Color.WHITE else chess.BLACK
@@ -304,9 +346,19 @@ async def apply_player_move_streamed(
         match = session.get(Match, match_id)
         if match is None:
             raise MatchNotFound(match_id)
-        player_row = _persist_player_move(session, match, uci, player_chat)
+        # Drain the mid-think chat buffer and merge with any chat attached to
+        # this make_move event. The joined string is the Move.player_chat_before
+        # — so transcripts, spectators, and memory_gen all see player chat.
+        pending_before = _drain_pending_chat(match)
+        merged_chat = _merge_player_chat(pending_before, player_chat)
+        player_row = _persist_player_move(session, match, uci, merged_chat)
         board_after_player = chess.Board(match.current_fen)
         end_info = _finalize_outcome(match, board_after_player)
+        if end_info is not None:
+            # Match just ended on the player's move. Any chat still in pending
+            # (none at this point since we just drained) or arriving later goes
+            # to trailing_player_chat — there's no next Move to attach it to.
+            _stash_trailing_chat(match, _drain_pending_chat(match))
         session.commit()
         session.refresh(player_row)
 
@@ -386,8 +438,10 @@ async def _run_engine_and_agents(
         )
         recent_chat = _load_last_chat_lines(session, match.id)
 
-        # Merge pending mid-think chat into recent_chat, then clear the buffer.
-        pending = _drain_pending_chat(match)
+        # Peek — DON'T drain — chat sent during engine thinking. Those messages
+        # will be claimed as player_chat_before on the *next* player move's
+        # Phase 1 drain. Feeding them to Subconscious here is additive context.
+        pending = _peek_pending_chat(match)
         for entry in pending:
             recent_chat.append(f"Player: {entry.get('text', '')}")
 
@@ -544,6 +598,10 @@ async def _run_engine_and_agents(
         # Did the engine's move end the game?
         board_after_engine = chess.Board(match.current_fen)
         end_info = _finalize_outcome(match, board_after_engine)
+        if end_info is not None:
+            # Match ended on the engine's move. Any pending player chat has no
+            # future Move to attach to — stash it for post-match use.
+            _stash_trailing_chat(match, _drain_pending_chat(match))
         session.commit()
 
     await emitters.on_agent_chat(soul_resp)
