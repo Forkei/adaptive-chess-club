@@ -3,7 +3,8 @@
 {% block title %}Edit {{ character.name }} — Metropolis Chess Club{% endblock %}
 
 {% block content %}
-<h1 class="text-2xl font-semibold mb-1">Edit {{ character.name }}</h1>
+<div class="mp-eyebrow mb-2">Revising</div>
+<h1 class="mp-display text-[36px] leading-[1] tracking-tight mb-2">Edit {{ character.name }}</h1>
 <p class="text-sm text-neutral-400 mb-6">
   Editing the backstory does <strong>not</strong> regenerate memories — that's a destructive
   operation. If you change the backstory meaningfully and want memories to match, run
@@ -103,7 +104,7 @@
   </div>
 
   <div class="pt-2">
-    <button class="rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
+    <button class="mp-btn mp-btn-brass" style="padding: 0.6rem 1.2rem;">
       Save
     </button>
     <a href="/characters/{{ character.id }}" class="ml-3 text-sm text-neutral-400 hover:text-white">Cancel</a>

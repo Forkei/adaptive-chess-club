@@ -1,48 +1,50 @@
-{# Phase 3c: shared Jinja macros re-used across the character grid,
-   discovery page, leaderboards, and summary views. #}
+{# Phase 3c polish pass: shared Jinja macros. Tokens defined in base.html. #}
 
 {% macro rating_badge(r) -%}
   {% set val = r.value if r.value is defined else r %}
   {% if val == 'family' %}
-    <span class="text-[10px] uppercase tracking-wider bg-emerald-900/60 text-emerald-200 rounded px-1.5 py-0.5">Family</span>
+    <span class="mp-chip" style="background: var(--mp-rating-family-bg); color: var(--mp-rating-family);">Family</span>
   {% elif val == 'mature' %}
-    <span class="text-[10px] uppercase tracking-wider bg-amber-900/60 text-amber-200 rounded px-1.5 py-0.5">Mature</span>
+    <span class="mp-chip" style="background: var(--mp-rating-mature-bg); color: var(--mp-rating-mature);">Mature</span>
   {% elif val == 'unrestricted' %}
-    <span class="text-[10px] uppercase tracking-wider bg-rose-900/60 text-rose-200 rounded px-1.5 py-0.5">Unrestricted</span>
+    <span class="mp-chip" style="background: var(--mp-rating-unrestricted-bg); color: var(--mp-rating-unrestricted);">Unrestricted</span>
   {% endif %}
 {%- endmacro %}
 
 {% macro character_state_badge(s) -%}
   {% set val = s.value if s.value is defined else s %}
   {% if val == 'generating_memories' %}
-    <span class="text-[10px] uppercase tracking-wider bg-amber-900/60 text-amber-200 rounded px-1.5 py-0.5">Generating…</span>
+    <span class="mp-chip" style="background: rgba(201,166,107,0.12); color: var(--mp-brass-bright);">Generating</span>
   {% elif val == 'generation_failed' %}
-    <span class="text-[10px] uppercase tracking-wider bg-rose-900/60 text-rose-200 rounded px-1.5 py-0.5">Failed</span>
+    <span class="mp-chip" style="background: rgba(168,66,63,0.18); color: #E79E9B;">Failed</span>
   {% else %}
-    <span class="text-[10px] uppercase tracking-wider bg-emerald-900/60 text-emerald-200 rounded px-1.5 py-0.5">Ready</span>
+    <span class="mp-chip" style="background: rgba(47,107,92,0.14); color: var(--mp-felt-bright);">Ready</span>
   {% endif %}
 {%- endmacro %}
 
 {% macro visibility_badge(v) -%}
   {% set val = v.value if v.value is defined else v %}
   {% if val == 'private' %}
-    <span class="text-[10px] uppercase tracking-wider bg-neutral-700 text-neutral-200 rounded px-1.5 py-0.5">Private</span>
+    <span class="mp-chip" style="background: var(--mp-surface-3); color: var(--mp-ink-muted); border-color: var(--mp-hairline-2);">Private</span>
   {% endif %}
 {%- endmacro %}
 
+{% macro preset_badge() -%}
+  <span class="mp-chip" style="background: transparent; color: var(--mp-brass); border-color: var(--mp-brass-dim);">House</span>
+{%- endmacro %}
+
 {% macro result_chip(m) -%}
-  {# m is a MatchSummaryOut-ish thing: has .status and .result #}
   {% if m.status == 'in_progress' %}
-    <span class="text-[10px] uppercase tracking-wider bg-emerald-900/60 text-emerald-200 rounded px-1.5 py-0.5">Live</span>
+    <span class="mp-chip" style="background: rgba(79,164,141,0.12); color: var(--mp-felt-bright);"><span class="mp-livedot"></span>Live</span>
   {% elif m.status == 'abandoned' %}
-    <span class="text-[10px] uppercase tracking-wider bg-neutral-800 text-neutral-400 rounded px-1.5 py-0.5">Resigned</span>
+    <span class="mp-chip" style="background: var(--mp-surface-3); color: var(--mp-ink-faint); border-color: var(--mp-hairline-2);">Resigned</span>
   {% elif m.result == 'draw' %}
-    <span class="text-[10px] uppercase tracking-wider bg-sky-900/60 text-sky-200 rounded px-1.5 py-0.5">Draw</span>
+    <span class="mp-chip" style="background: rgba(88,121,163,0.14); color: var(--mp-ink-blue-alt);">Draw</span>
   {% elif m.result == 'white_win' %}
-    <span class="text-[10px] uppercase tracking-wider bg-indigo-900/60 text-indigo-200 rounded px-1.5 py-0.5">White</span>
+    <span class="mp-chip" style="background: rgba(237,228,206,0.12); color: var(--mp-ink);">White</span>
   {% elif m.result == 'black_win' %}
-    <span class="text-[10px] uppercase tracking-wider bg-indigo-900/60 text-indigo-200 rounded px-1.5 py-0.5">Black</span>
+    <span class="mp-chip" style="background: rgba(47,74,66,0.60); color: var(--mp-ink);">Black</span>
   {% else %}
-    <span class="text-[10px] uppercase tracking-wider bg-neutral-800 text-neutral-400 rounded px-1.5 py-0.5">—</span>
+    <span class="mp-chip" style="background: var(--mp-surface-3); color: var(--mp-ink-faint);">—</span>
   {% endif %}
 {%- endmacro %}

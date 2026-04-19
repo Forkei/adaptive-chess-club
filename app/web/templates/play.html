@@ -9,140 +9,146 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <style>
-  .white-1e1d7 { background-color: #e6e6e6 !important; }
-  .black-3c85d { background-color: #525866 !important; }
-  .highlight-last { box-shadow: inset 0 0 0 3px rgba(16, 185, 129, 0.8); }
-
+  /* Play-page-specific only — shared chat/conn/board styles live in base.html. */
   .memory-ribbon { transition: opacity 0.8s ease-in-out; }
   .memory-ribbon.fading { opacity: 0.35; }
   .memory-detail { display: none; }
   .memory-item:hover .memory-detail { display: block; }
   .memory-item.expanded .memory-detail { display: block; }
+  .highlight-last { box-shadow: inset 0 0 0 3px var(--mp-brass-bright); }
 
-  .chat-bubble-agent {
-    background: linear-gradient(180deg, rgba(71,85,105,0.35), rgba(51,65,85,0.25));
-    border-left: 2px solid #60a5fa;
-  }
-  .chat-bubble-player {
-    background: linear-gradient(180deg, rgba(29,78,216,0.2), rgba(29,78,216,0.1));
-    border-left: 2px solid #f59e0b;
-    margin-left: 1.5rem;
-  }
-  .chat-bubble-player.in-transit { opacity: 0.6; }
-
-  /* Connection status pill */
-  .conn-live   { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
-  .conn-retry  { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
-  .conn-lost   { background: rgba(244, 63, 94, 0.18); color: #fda4af; }
-
-  /* Disconnect overlay */
+  /* Disconnect overlay — fixed, covers everything, brass-bordered modal. */
   #disconnect-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+    position: fixed; inset: 0; background: rgba(8, 10, 9, 0.88);
     z-index: 50; display: none; align-items: center; justify-content: center;
+    backdrop-filter: blur(2px);
   }
   #disconnect-overlay.visible { display: flex; }
+
+  /* Board framing — a thin brass frame around the whole chessboard. */
+  .mp-board-frame {
+    padding: 10px;
+    background:
+      linear-gradient(180deg, rgba(201,166,107,0.08), rgba(201,166,107,0.02)),
+      var(--mp-surface-2);
+    border: 1px solid var(--mp-brass-dim);
+    position: relative;
+  }
+  .mp-board-frame::before {
+    content: ''; position: absolute; inset: 4px;
+    border: 1px solid rgba(201,166,107,0.18); pointer-events: none;
+  }
 </style>
 {% endblock %}
 
 {% block content %}
 
-<div id="alert-banner" class="hidden mb-5 rounded border px-4 py-3 text-sm"></div>
+<div id="alert-banner" class="hidden mb-5 rounded-sm border px-4 py-3 text-sm"></div>
 
-<div class="flex items-start gap-6 mb-4">
-  <div class="text-5xl">{{ character.avatar_emoji or "♟" }}</div>
-  <div class="flex-1">
-    <h1 class="text-2xl font-semibold">{{ character.name }}</h1>
-    <p class="text-sm text-neutral-400">
-      {{ character.short_description }}
-      · playing at ~{{ match.character_elo_at_start }} Elo
-      · you're <span id="player-color">{{ match.player_color.value }}</span>
-    </p>
-    <p class="text-xs text-neutral-500 mt-1">
-      mood: <span id="emotion-indicator" class="font-medium text-neutral-300">—</span>
-    </p>
+<div class="flex items-start gap-6 mb-6 mp-enter mp-enter-1">
+  <div class="shrink-0 w-16 h-16 flex items-center justify-center border border-[var(--mp-brass-dim)] bg-[var(--mp-surface-2)] rounded-sm text-4xl leading-none">
+    {{ character.avatar_emoji or "♟" }}
   </div>
-  <div class="text-right text-sm">
-    <div id="match-status" class="font-medium">
+  <div class="flex-1">
+    <div class="mp-eyebrow mb-1">Board · {{ match.player_color.value }}</div>
+    <h1 class="mp-display text-[32px] leading-[1] tracking-tight">{{ character.name }}</h1>
+    <p class="text-[13px] text-[var(--mp-ink-muted)] mt-2 mp-clamp-2 max-w-xl">
+      {{ character.short_description }}
+    </p>
+    <div class="mt-2 flex items-center gap-4 text-[11px] mp-mono uppercase tracking-[0.12em] text-[var(--mp-ink-faint)]">
+      <span>~{{ match.character_elo_at_start }} Elo</span>
+      <span>·</span>
+      <span>mood <span id="emotion-indicator" class="text-[var(--mp-ink-muted)]">—</span></span>
+    </div>
+  </div>
+  <div class="text-right text-sm shrink-0">
+    <div id="match-status" class="mp-display text-[17px]">
       {% if match.status.value == "in_progress" %}
-        <span class="text-emerald-300">In progress</span>
+        <span class="text-[var(--mp-felt-bright)]">In progress</span>
       {% elif match.status.value == "completed" %}
-        <span class="text-amber-300">Finished</span>
+        <span class="text-[var(--mp-brass-bright)]">Finished</span>
       {% else %}
-        <span class="text-rose-300">Abandoned</span>
+        <span class="text-[#E79E9B]">Abandoned</span>
       {% endif %}
     </div>
-    <div class="text-neutral-500 text-xs" id="match-result">
+    <div class="text-[var(--mp-ink-faint)] text-[11px] mp-mono uppercase tracking-[0.12em] mt-1" id="match-result">
       {{ match.result.value if match.result else "" }}
     </div>
-    <div id="conn-pill" class="mt-2 inline-block rounded px-2 py-0.5 text-[10px] uppercase tracking-wider conn-retry">
+    <div id="conn-pill" class="conn-pill conn-retry mt-3">
       connecting…
     </div>
-    <div id="spectator-count-pill" class="hidden mt-1 text-[10px] text-indigo-300 uppercase tracking-wider">
+    <div id="spectator-count-pill" class="hidden mt-2 text-[10px] mp-mono uppercase tracking-[0.15em]" style="color: var(--mp-ink-blue-alt);">
       <span id="spectator-count">0</span> watching
     </div>
   </div>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-[minmax(0,480px)_minmax(0,1fr)] gap-6">
+<div class="grid grid-cols-1 lg:grid-cols-[minmax(0,500px)_minmax(0,1fr)] gap-6 mp-enter mp-enter-2">
   <div>
-    <div id="board" class="w-full max-w-[480px]"></div>
-    <div class="mt-3 flex items-center gap-3">
-      <button id="resign-btn" class="rounded bg-rose-900 hover:bg-rose-800 px-3 py-1.5 text-sm">Resign</button>
-      <div id="thinking-banner" class="text-sm text-amber-300 hidden">
-        {{ character.name }} is thinking<span id="thinking-eta"></span>…
+    <div class="mp-board-frame">
+      <div id="board" class="w-full max-w-[480px]"></div>
+    </div>
+    <div class="mt-4 flex items-center gap-3">
+      <button id="resign-btn" class="mp-btn mp-btn-danger">Resign</button>
+      <div id="thinking-banner" class="hidden flex items-center gap-2 text-[13px] text-[var(--mp-brass-bright)]">
+        <span class="mp-livedot" style="background: var(--mp-brass-bright); box-shadow: 0 0 0 0 rgba(201,166,107,0.55);"></span>
+        <span>{{ character.name }} is thinking<span id="thinking-eta"></span>…</span>
       </div>
     </div>
-    <div id="memory-ribbon" class="hidden mt-4 text-sm italic text-neutral-400 border-l-2 border-indigo-700/60 pl-3 memory-ribbon">
-      <span id="memory-ribbon-lede">{{ character.name }} is reminded of something…</span>
-      <div id="memory-ribbon-items" class="mt-2 space-y-2"></div>
+    <div id="memory-ribbon" class="hidden mt-5 text-[13px] italic text-[var(--mp-ink-muted)] border-l-2 pl-4 memory-ribbon"
+         style="border-color: var(--mp-brass-dim); background: linear-gradient(90deg, rgba(201,166,107,0.05), transparent);">
+      <span id="memory-ribbon-lede" class="mp-display">{{ character.name }} is reminded of something…</span>
+      <div id="memory-ribbon-items" class="mt-3 space-y-2"></div>
     </div>
   </div>
 
-  <div class="flex flex-col gap-4 min-h-[480px]">
+  <div class="flex flex-col gap-5 min-h-[480px]">
     <div>
-      <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-2">Table talk</h2>
-      <div id="chat-log" class="text-sm text-neutral-200 bg-neutral-900 border border-neutral-800 rounded p-4 h-[220px] overflow-y-auto space-y-2">
-        <div class="text-xs text-neutral-500 italic">No messages yet. Press Enter to say something to {{ character.name }} — they can hear you even while thinking.</div>
+      <h2 class="mp-eyebrow mb-2">Table talk</h2>
+      <div id="chat-log" class="mp-panel rounded-sm text-sm p-4 h-[220px] overflow-y-auto space-y-2">
+        <div class="text-[12px] text-[var(--mp-ink-faint)] italic">
+          No messages yet. Press Enter to say something to {{ character.name }} — they can hear you even while thinking.
+        </div>
       </div>
-      <div class="mt-2 flex gap-2">
-        <input id="chat-input" type="text" maxlength="500" placeholder="Say something to {{ character.name }}… (Enter to send)"
-               class="flex-1 rounded bg-neutral-900 border border-neutral-800 px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-600" />
+      <div class="mt-2">
+        <input id="chat-input" type="text" maxlength="500"
+               placeholder="Say something to {{ character.name }}… (Enter to send)"
+               class="mp-input w-full" />
       </div>
     </div>
 
     <div id="crowd-panel" class="hidden">
       <div class="flex items-center justify-between mb-2">
-        <h2 class="text-sm uppercase tracking-wider text-neutral-400">Crowd noise</h2>
-        <button id="crowd-mute-btn" class="text-[10px] text-neutral-500 hover:text-neutral-300 uppercase tracking-wider">mute</button>
+        <h2 class="mp-eyebrow">Crowd noise</h2>
+        <button id="crowd-mute-btn" class="text-[10px] mp-mono uppercase tracking-[0.15em] text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink)]">mute</button>
       </div>
-      <div id="crowd-log" class="text-sm text-neutral-300 bg-neutral-900 border border-neutral-800 rounded p-3 h-[140px] overflow-y-auto space-y-1.5"></div>
-      <div class="mt-1 text-[10px] text-neutral-600 italic">{{ character.name }} can't hear them.</div>
+      <div id="crowd-log" class="mp-panel rounded-sm text-sm p-3 h-[140px] overflow-y-auto space-y-1.5"></div>
+      <div class="mt-1 text-[10px] text-[var(--mp-ink-ghost)] italic">{{ character.name }} can't hear them.</div>
     </div>
 
     <div>
-      <h2 class="text-sm uppercase tracking-wider text-neutral-400 mb-2">Moves</h2>
-      <ol id="move-list" class="text-sm font-mono text-neutral-200 bg-neutral-900 border border-neutral-800 rounded p-4 h-[220px] overflow-y-auto">
-      </ol>
+      <h2 class="mp-eyebrow mb-2">Moves</h2>
+      <ol id="move-list" class="mp-panel rounded-sm p-4 h-[220px] overflow-y-auto mp-mono text-[13px] text-[var(--mp-ink)]"></ol>
     </div>
   </div>
 </div>
 
-<div id="postmatch-panel" class="hidden mt-6 rounded border border-indigo-800/60 bg-indigo-950/30 px-4 py-3 text-sm">
-  <div class="font-medium text-indigo-200 mb-2">
+<div id="postmatch-panel" class="hidden mt-8 mp-panel rounded-sm px-5 py-4">
+  <div class="mp-display text-[17px] text-[var(--mp-ink)] mb-2">
     <span id="postmatch-headline">{{ character.name }} is reflecting on the match…</span>
   </div>
-  <ul id="postmatch-steps" class="text-xs text-indigo-300 space-y-0.5"></ul>
+  <ul id="postmatch-steps" class="text-[12px] text-[var(--mp-ink-muted)] space-y-1 mp-mono"></ul>
 </div>
 
 <div id="disconnect-overlay">
-  <div class="bg-neutral-900 border border-rose-700/70 rounded-lg p-6 max-w-md text-center">
-    <div class="text-rose-300 font-semibold mb-2">Connection lost</div>
-    <div class="text-sm text-neutral-300 mb-3">
+  <div class="mp-panel-raised mp-framed rounded-sm p-7 max-w-md text-center" style="border-color: var(--mp-oxblood);">
+    <div class="mp-display italic text-[26px] mb-2" style="color: #E79E9B;">Connection lost.</div>
+    <div class="text-[13px] text-[var(--mp-ink-muted)] mb-4">
       Your connection to {{ character.name }} dropped. The match will be abandoned in
-      <span id="disconnect-countdown" class="font-mono text-rose-200">—:—</span>
+      <span id="disconnect-countdown" class="mp-mono text-[var(--mp-brass-bright)]">—:—</span>
       unless you reconnect.
     </div>
-    <div class="text-xs text-neutral-500">The client is retrying automatically.</div>
+    <div class="text-[11px] text-[var(--mp-ink-faint)] mp-mono uppercase tracking-[0.15em]">client is retrying automatically</div>
   </div>
 </div>
 

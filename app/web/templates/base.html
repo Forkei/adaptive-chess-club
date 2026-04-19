@@ -5,38 +5,284 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}Metropolis Chess Club{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
+
+  {# Typography: Fraunces (display serif) + IBM Plex Sans (body) + IBM Plex Mono (numerics). #}
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..800,0..100,0..1;1,9..144,300..800,0..100,0..1&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <style>
+    /* =========================================================
+       Metropolis design system — Phase 3c polish pass.
+       Established in base.html so every page inherits automatically.
+       Token names are documented in docs/design_system.md.
+       ========================================================= */
+    :root {
+      /* Surface palette — felt + parchment + brass under low light. */
+      --mp-bg:         #0F1412;  /* deep green-black (felt in shadow)      */
+      --mp-surface-1:  #151B19;  /* primary panel                          */
+      --mp-surface-2:  #1C2320;  /* raised card                            */
+      --mp-surface-3:  #232A27;  /* hover lift                             */
+      --mp-hairline:   #2E3430;  /* subtle border                          */
+      --mp-hairline-2: #3A4038;  /* stronger border                        */
+
+      /* Ink — warm off-whites, not cool greys. */
+      --mp-ink:        #EDE4CE;  /* primary text (parchment)               */
+      --mp-ink-muted:  #B5AD96;  /* secondary text                         */
+      --mp-ink-faint:  #7F7966;  /* captions, metadata                     */
+      --mp-ink-ghost:  #4C483E;  /* placeholders                           */
+
+      /* Metals & felt — the accent system. */
+      --mp-brass:         #C9A66B;  /* primary accent                      */
+      --mp-brass-bright:  #E0C38F;  /* emphasis / live-state               */
+      --mp-brass-dim:     #8E7649;  /* borders under brass elements        */
+      --mp-felt:          #2F6B5C;  /* success / in-progress               */
+      --mp-felt-bright:   #4FA48D;
+      --mp-oxblood:       #A8423F;  /* resign / danger                     */
+      --mp-ink-blue:      #5879A3;  /* cool secondary — chat, spectators   */
+      --mp-ink-blue-alt:  #8DA4C3;
+
+      /* Rating chips — keep the semantic mapping from Phase 3a, but warmer. */
+      --mp-rating-family:       #4FA48D;
+      --mp-rating-family-bg:    rgba(47, 107, 92, 0.20);
+      --mp-rating-mature:       #C9A66B;
+      --mp-rating-mature-bg:    rgba(201, 166, 107, 0.16);
+      --mp-rating-unrestricted: #B45A56;
+      --mp-rating-unrestricted-bg: rgba(168, 66, 63, 0.22);
+
+      /* Motion. */
+      --mp-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+
+    html, body { background: var(--mp-bg); color: var(--mp-ink); }
+    body {
+      font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif;
+      font-weight: 400;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      /* Subtle paper-grain on the whole canvas. Keeps large dark areas from
+         looking flat under warm lighting. */
+      background-image:
+        radial-gradient(1200px 600px at 80% -10%, rgba(201, 166, 107, 0.06), transparent 60%),
+        radial-gradient(900px 500px at 10% 120%, rgba(47, 107, 92, 0.05), transparent 60%);
+      background-attachment: fixed;
+    }
+
+    /* Display type — serif with optical sizing and subtle WONK axis for character. */
+    .mp-display {
+      font-family: 'Fraunces', 'Times New Roman', serif;
+      font-optical-sizing: auto;
+      font-variation-settings: 'opsz' 48, 'SOFT' 30, 'WONK' 1;
+      letter-spacing: -0.01em;
+    }
+    .mp-display-tight { letter-spacing: -0.02em; }
+    .mp-italic { font-style: italic; font-variation-settings: 'opsz' 48, 'SOFT' 60, 'WONK' 1; }
+    .mp-mono  { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+    /* Eyebrow / uppercase label used across pages. */
+    .mp-eyebrow {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--mp-ink-faint);
+    }
+
+    /* Hairline rules — used sparingly, never Tailwind's default. */
+    .mp-hr { height: 1px; background: var(--mp-hairline); border: 0; }
+    .mp-hr-strong { height: 1px; background: var(--mp-hairline-2); border: 0; }
+
+    /* Brass corner marks — decorative, applied via .mp-framed on any container. */
+    .mp-framed { position: relative; }
+    .mp-framed::before, .mp-framed::after,
+    .mp-framed > .mp-frame-tl, .mp-framed > .mp-frame-br {
+      content: ''; position: absolute; width: 10px; height: 10px; pointer-events: none;
+    }
+    .mp-framed::before { /* top-right */
+      top: -1px; right: -1px;
+      border-top: 1px solid var(--mp-brass); border-right: 1px solid var(--mp-brass);
+    }
+    .mp-framed::after { /* bottom-left */
+      bottom: -1px; left: -1px;
+      border-bottom: 1px solid var(--mp-brass); border-left: 1px solid var(--mp-brass);
+    }
+    .mp-frame-tl {
+      top: -1px; left: -1px;
+      border-top: 1px solid var(--mp-brass); border-left: 1px solid var(--mp-brass);
+    }
+    .mp-frame-br {
+      bottom: -1px; right: -1px;
+      border-bottom: 1px solid var(--mp-brass); border-right: 1px solid var(--mp-brass);
+    }
+
+    /* Panel — the workhorse container (cards, tables, list rows). */
+    .mp-panel {
+      background: var(--mp-surface-1);
+      border: 1px solid var(--mp-hairline);
+    }
+    .mp-panel-raised {
+      background: var(--mp-surface-2);
+      border: 1px solid var(--mp-hairline);
+    }
+    .mp-panel-raised:hover {
+      background: var(--mp-surface-3);
+      border-color: var(--mp-hairline-2);
+    }
+
+    /* Button primitives. */
+    .mp-btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-weight: 500; font-size: 13px;
+      padding: 0.45rem 0.85rem;
+      border-radius: 2px;
+      border: 1px solid transparent;
+      transition: background 180ms var(--mp-ease), border-color 180ms var(--mp-ease), color 180ms var(--mp-ease);
+      cursor: pointer;
+    }
+    .mp-btn-brass {
+      background: linear-gradient(180deg, #D5B579 0%, #A78248 100%);
+      color: #1A140A;
+      border-color: #7D5E32;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 0 rgba(0,0,0,0.2);
+    }
+    .mp-btn-brass:hover { background: linear-gradient(180deg, #E4C48B 0%, #B48F56 100%); }
+    .mp-btn-ghost {
+      background: transparent; color: var(--mp-ink-muted); border-color: var(--mp-hairline-2);
+    }
+    .mp-btn-ghost:hover { color: var(--mp-ink); border-color: var(--mp-brass-dim); }
+    .mp-btn-danger {
+      background: rgba(168, 66, 63, 0.12); color: #E79E9B; border-color: rgba(168, 66, 63, 0.5);
+    }
+    .mp-btn-danger:hover { background: rgba(168, 66, 63, 0.2); color: #F3BEBB; }
+
+    /* Chips (rating / status / result). */
+    .mp-chip {
+      display: inline-flex; align-items: center;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 2px;
+      border: 1px solid transparent;
+    }
+
+    /* Live-state dot — breathes once a second. */
+    .mp-livedot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--mp-felt-bright);
+      box-shadow: 0 0 0 0 rgba(79, 164, 141, 0.65);
+      animation: mp-pulse 2s infinite;
+      margin-right: 6px;
+    }
+    @keyframes mp-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(79, 164, 141, 0.6); }
+      70%  { box-shadow: 0 0 0 6px rgba(79, 164, 141, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(79, 164, 141, 0); }
+    }
+
+    /* Page entry choreography — staggered fade-up on first render only. */
+    @keyframes mp-enter {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .mp-enter { animation: mp-enter 520ms var(--mp-ease) both; }
+    .mp-enter-1 { animation-delay: 40ms; }
+    .mp-enter-2 { animation-delay: 120ms; }
+    .mp-enter-3 { animation-delay: 200ms; }
+
+    /* Forms — inputs feel like engraved fields. */
+    .mp-input {
+      font-family: 'IBM Plex Sans', sans-serif;
+      background: var(--mp-bg);
+      color: var(--mp-ink);
+      border: 1px solid var(--mp-hairline-2);
+      border-radius: 2px;
+      padding: 0.5rem 0.75rem;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 140ms var(--mp-ease);
+    }
+    .mp-input:focus { border-color: var(--mp-brass); }
+    .mp-input::placeholder { color: var(--mp-ink-ghost); }
+
+    /* Chat bubble variants (used by play.html + watch.html). */
+    .chat-bubble-agent {
+      background: linear-gradient(180deg, rgba(47,107,92,0.18), rgba(47,107,92,0.06));
+      border-left: 2px solid var(--mp-felt-bright);
+      padding: 10px 14px; border-radius: 2px;
+    }
+    .chat-bubble-player {
+      background: linear-gradient(180deg, rgba(201,166,107,0.14), rgba(201,166,107,0.05));
+      border-left: 2px solid var(--mp-brass);
+      margin-left: 1.5rem;
+      padding: 10px 14px; border-radius: 2px;
+    }
+    .chat-bubble-player.in-transit { opacity: 0.55; }
+    .chat-bubble-spectator {
+      background: rgba(88, 121, 163, 0.10);
+      border-left: 2px solid var(--mp-ink-blue);
+      padding: 10px 14px; border-radius: 2px;
+    }
+    .chat-bubble-spectator.in-transit { opacity: 0.55; }
+
+    /* Chessboard.js colour overrides — felt tint. */
+    .white-1e1d7 { background-color: #EDE4CE !important; }
+    .black-3c85d { background-color: #2F4A42 !important; }
+
+    /* Utility: thin brass rule for section separators. */
+    .mp-brass-rule {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--mp-brass-dim) 20%, var(--mp-brass-dim) 80%, transparent);
+    }
+
+    /* Connection pill states — reused across play/watch. */
+    .conn-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+      padding: 3px 8px; border-radius: 2px; border: 1px solid transparent;
+    }
+    .conn-live   { background: rgba(79,164,141,0.12); color: var(--mp-felt-bright);  border-color: rgba(79,164,141,0.35); }
+    .conn-retry  { background: rgba(201,166,107,0.10); color: var(--mp-brass-bright); border-color: rgba(201,166,107,0.35); }
+    .conn-lost   { background: rgba(168,66,63,0.15); color: #E79E9B; border-color: rgba(168,66,63,0.45); }
+
+    /* Line-clamp utility — Tailwind's ships via plugin we don't load here. */
+    .mp-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .mp-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  </style>
+
   {% block head_extra %}{% endblock %}
 </head>
-<body class="min-h-screen bg-neutral-950 text-neutral-100">
-  <header class="border-b border-neutral-800 bg-neutral-900/60 backdrop-blur">
+<body class="min-h-screen">
+  <header class="border-b border-[var(--mp-hairline)] bg-[var(--mp-surface-1)]/70 backdrop-blur-sm">
     <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-      <a href="/" class="text-xl font-semibold tracking-wide">
-        <span class="mr-2">♟</span>Metropolis Chess Club
+      <a href="/" class="flex items-center gap-3 group">
+        {# Monogram M framed in brass — small but intentional. #}
+        <span class="inline-flex items-center justify-center w-8 h-8 rounded-sm border border-[var(--mp-brass-dim)] text-[var(--mp-brass)] mp-display text-lg group-hover:border-[var(--mp-brass)] group-hover:text-[var(--mp-brass-bright)] transition">
+          M
+        </span>
+        <span class="mp-display text-[19px] tracking-tight">Metropolis <span class="mp-italic text-[var(--mp-ink-muted)]">Chess Club</span></span>
       </a>
-      <nav class="text-sm text-neutral-300 space-x-4 flex items-center">
+      <nav class="text-[13px] text-[var(--mp-ink-muted)] space-x-5 flex items-center">
         {% if player %}
-        <a href="/" class="hover:text-white">Characters</a>
-        <a href="/discovery" class="hover:text-white">Discovery</a>
-        <a href="/leaderboard/characters" class="hover:text-white">Leaderboard</a>
-        <a href="/characters/new" class="rounded bg-emerald-500 px-3 py-1.5 font-medium text-neutral-900 hover:bg-emerald-400">
-          + New character
+        <a href="/" class="hover:text-[var(--mp-ink)] transition">Characters</a>
+        <a href="/discovery" class="hover:text-[var(--mp-ink)] transition">Discovery</a>
+        <a href="/leaderboard/characters" class="hover:text-[var(--mp-ink)] transition">Leaderboard</a>
+        <a href="/characters/new" class="mp-btn mp-btn-brass">+ New character</a>
+        <a href="/settings" class="hover:text-[var(--mp-ink)] transition" title="Settings (@{{ player.username }})">
+          <span class="mp-mono text-[12px]">@{{ player.username }}</span>
         </a>
-        <a href="/settings" class="hover:text-white" title="Settings (@{{ player.username }})">
-          @{{ player.username }}
-        </a>
-        <a href="/logout" class="text-neutral-400 hover:text-white">Logout</a>
+        <a href="/logout" class="text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink)] text-[12px]">Logout</a>
         {% else %}
-        <a href="/login" class="rounded bg-emerald-500 px-3 py-1.5 font-medium text-neutral-900 hover:bg-emerald-400">
-          Log in
-        </a>
+        <a href="/login" class="mp-btn mp-btn-brass">Log in</a>
         {% endif %}
       </nav>
     </div>
   </header>
+
   {% block flash %}
     {% if request.query_params.get('flash') %}
     <div class="max-w-6xl mx-auto px-6 pt-4">
-      <div class="rounded border border-emerald-900/80 bg-emerald-950/40 p-3 text-sm text-emerald-200">
+      <div class="rounded-sm border border-[rgba(47,107,92,0.4)] bg-[rgba(47,107,92,0.10)] p-3 text-sm text-[var(--mp-felt-bright)]">
         {% set fkey = request.query_params.get('flash') %}
         {% set fuser = request.query_params.get('u') %}
         {% if fkey == 'welcome' %}Welcome, @{{ fuser }}. Your account was created.
@@ -49,11 +295,14 @@
     </div>
     {% endif %}
   {% endblock %}
-  <main class="max-w-6xl mx-auto px-6 py-8">
+
+  <main class="max-w-6xl mx-auto px-6 py-10">
     {% block content %}{% endblock %}
   </main>
-  <footer class="max-w-6xl mx-auto px-6 py-8 text-center text-xs text-neutral-500">
-    Metropolis Chess Club — Phase 3a: username login, character ownership, content rating.
+
+  <footer class="max-w-6xl mx-auto px-6 py-10 text-center">
+    <div class="mp-brass-rule mb-6"></div>
+    <div class="mp-eyebrow">Metropolis Chess Club · Phase 3c · est. 2026</div>
   </footer>
 </body>
 </html>

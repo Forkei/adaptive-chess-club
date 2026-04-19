@@ -3,14 +3,15 @@
 {% block title %}Log in — Metropolis Chess Club{% endblock %}
 
 {% block content %}
-<div class="max-w-md mx-auto mt-8">
-  <h1 class="text-2xl font-semibold mb-1">Log in</h1>
-  <p class="text-sm text-neutral-400 mb-6">
-    Pick a username to get started. If it's new, we'll create the account.
+<div class="max-w-md mx-auto mt-10 mp-enter mp-enter-1">
+  <div class="mp-eyebrow mb-2">Members' entrance</div>
+  <h1 class="mp-display text-[36px] leading-[1] tracking-tight mb-2">Log in</h1>
+  <p class="text-[13px] text-[var(--mp-ink-muted)] mb-6">
+    Pick a username to get started. If it's new, we'll open an account.
   </p>
 
   {% if error %}
-  <div class="mb-4 rounded border border-rose-900/80 bg-rose-950/40 p-3 text-sm text-rose-200">
+  <div class="mb-5 rounded-sm border p-3 text-sm" style="border-color: rgba(168,66,63,0.45); background: rgba(168,66,63,0.08); color: #E79E9B;">
     {% if error == 'empty' %}Username can't be blank.
     {% elif error == 'too_short' %}Username must be at least 3 characters.
     {% elif error == 'too_long' %}Username must be 24 characters or fewer.
@@ -20,30 +21,30 @@
   </div>
   {% endif %}
 
-  <form method="post" action="/login" class="space-y-4">
+  <form method="post" action="/login" class="space-y-5 mp-panel rounded-sm p-6 mp-framed relative">
+    <span class="mp-frame-tl"></span><span class="mp-frame-br"></span>
     <input type="hidden" name="next" value="{{ next or '/' }}" />
     <div>
-      <label class="block text-sm mb-1">Username</label>
+      <label class="mp-eyebrow block mb-2">Username</label>
       <input required autofocus name="username" value="{{ prefill }}"
              minlength="3" maxlength="24" pattern="[a-z0-9_]+"
-             class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2"
+             class="mp-input w-full mp-mono"
              placeholder="your_username" />
-      <p class="text-xs text-neutral-500 mt-1">
+      <p class="text-[11px] text-[var(--mp-ink-faint)] mt-2">
         Lowercase letters, digits, underscore. 3–24 chars.
       </p>
     </div>
-    <button class="rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
-      Continue
+    <button class="mp-btn mp-btn-brass w-full justify-center" style="padding: 0.65rem 1rem;">
+      Continue ›
     </button>
   </form>
 
-  <div class="mt-8 rounded border border-amber-900/60 bg-amber-950/30 p-4 text-xs text-amber-200">
-    <div class="font-semibold mb-1">Heads up</div>
-    <p>
-      Usernames are claimed on first login. <strong>There's no password</strong> — anyone with
-      your username can log in as you. This will change in a future version. Don't use this
-      for anything you actually care about.
-    </p>
+  <div class="mt-8 mp-panel rounded-sm p-4 text-[11px] text-[var(--mp-ink-muted)] leading-relaxed"
+       style="border-color: rgba(201,166,107,0.28);">
+    <div class="mp-eyebrow mb-2" style="color: var(--mp-brass);">Heads up</div>
+    Usernames are claimed on first login. <span class="mp-italic">There's no password</span> —
+    anyone with your username can log in as you. This will change in a future version. Don't use this
+    for anything you actually care about.
   </div>
 </div>
 {% endblock %}

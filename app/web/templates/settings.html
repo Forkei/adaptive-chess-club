@@ -3,61 +3,48 @@
 {% block title %}Settings — Metropolis Chess Club{% endblock %}
 
 {% block content %}
-<div class="max-w-xl">
-  <h1 class="text-2xl font-semibold mb-1">Settings</h1>
-  <p class="text-sm text-neutral-400 mb-6">
-    Logged in as <strong>@{{ player.username }}</strong>. Username is permanent in this release.
+<div class="max-w-xl mp-enter mp-enter-1">
+  <div class="mp-eyebrow mb-2">Member · @{{ player.username }}</div>
+  <h1 class="mp-display text-[36px] leading-[1] tracking-tight mb-2">Settings</h1>
+  <p class="text-[13px] text-[var(--mp-ink-muted)] mb-6">
+    Username is permanent in this release. Rating changes apply to new matches only — they don't interrupt a game in progress.
   </p>
 
   {% if error %}
-  <div class="mb-4 rounded border border-rose-900/80 bg-rose-950/40 p-3 text-sm text-rose-200">
-    {{ error }}
-  </div>
+  <div class="mb-5 rounded-sm border p-3 text-sm" style="border-color: rgba(168,66,63,0.45); background: rgba(168,66,63,0.08); color: #E79E9B;">{{ error }}</div>
   {% endif %}
 
   <form method="post" action="/settings" class="space-y-6">
-    <div>
-      <label class="block text-sm mb-1">Display name</label>
-      <input name="display_name" value="{{ player.display_name }}" maxlength="80"
-             class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
-      <p class="text-xs text-neutral-500 mt-1">Shown on your profile and match records. Free-form.</p>
+    <div class="mp-panel rounded-sm p-5">
+      <label class="mp-eyebrow block mb-2">Display name</label>
+      <input name="display_name" value="{{ player.display_name }}" maxlength="80" class="mp-input w-full" />
+      <p class="text-[11px] text-[var(--mp-ink-faint)] mt-2">Shown on your profile and match records. Free-form.</p>
     </div>
 
-    <fieldset class="space-y-3 rounded border border-neutral-800 p-4">
-      <legend class="px-2 text-sm text-neutral-300">Content rating preference</legend>
-      <p class="text-xs text-neutral-500">
+    <fieldset class="mp-panel rounded-sm p-5">
+      <legend class="mp-eyebrow px-2" style="color: var(--mp-brass);">Content rating</legend>
+      <p class="text-[11px] text-[var(--mp-ink-faint)] mb-4 mt-1">
         Characters whose rating exceeds this are hidden from you.
       </p>
       {% set cur = player.max_content_rating.value if player.max_content_rating.value is defined else player.max_content_rating %}
-      <label class="flex items-start gap-3 cursor-pointer">
-        <input type="radio" name="max_content_rating" value="family" {% if cur == 'family' %}checked{% endif %}
-               class="mt-1 accent-emerald-400" />
+
+      {% macro rating_row(key, title, desc) %}
+      <label class="flex items-start gap-3 cursor-pointer py-2">
+        <input type="radio" name="max_content_rating" value="{{ key }}" {% if cur == key %}checked{% endif %}
+               class="mt-1 accent-[var(--mp-brass)]" />
         <div>
-          <div class="text-sm font-medium">Family</div>
-          <div class="text-xs text-neutral-500">Kid-friendly. No swearing, no adult themes.</div>
+          <div class="mp-display text-[16px] text-[var(--mp-ink)]">{{ title }}</div>
+          <div class="text-[12px] text-[var(--mp-ink-faint)] mt-0.5">{{ desc }}</div>
         </div>
       </label>
-      <label class="flex items-start gap-3 cursor-pointer">
-        <input type="radio" name="max_content_rating" value="mature" {% if cur == 'mature' %}checked{% endif %}
-               class="mt-1 accent-emerald-400" />
-        <div>
-          <div class="text-sm font-medium">Mature</div>
-          <div class="text-xs text-neutral-500">Adult tone allowed. Mild swearing, adult humor. No explicit content.</div>
-        </div>
-      </label>
-      <label class="flex items-start gap-3 cursor-pointer">
-        <input type="radio" name="max_content_rating" value="unrestricted" {% if cur == 'unrestricted' %}checked{% endif %}
-               class="mt-1 accent-emerald-400" />
-        <div>
-          <div class="text-sm font-medium">Unrestricted</div>
-          <div class="text-xs text-neutral-500">Character authors take full responsibility. The LLM still refuses genuinely harmful content.</div>
-        </div>
-      </label>
+      {% endmacro %}
+
+      {{ rating_row('family',       'Family',        'Kid-friendly. No swearing, no adult themes.') }}
+      {{ rating_row('mature',       'Mature',        'Adult tone allowed. Mild swearing, adult humor. No explicit content.') }}
+      {{ rating_row('unrestricted', 'Unrestricted', 'Character authors take full responsibility. The LLM still refuses genuinely harmful content.') }}
     </fieldset>
 
-    <button class="rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
-      Save
-    </button>
+    <button class="mp-btn mp-btn-brass" style="padding: 0.65rem 1.4rem;">Save</button>
   </form>
 </div>
 {% endblock %}

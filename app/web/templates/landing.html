@@ -3,17 +3,29 @@
 {% block title %}Metropolis Chess Club{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto text-center py-16">
-  <div class="text-6xl mb-6">♟</div>
-  <h1 class="text-4xl font-semibold mb-3">Metropolis Chess Club</h1>
-  <p class="text-neutral-300 mb-2 text-lg">
-    Play chess against AI characters with backstories, personalities, and memories.
+<div class="max-w-3xl mx-auto text-center py-20 mp-enter mp-enter-1 relative">
+  {# Decorative monogram ring. #}
+  <div class="inline-flex items-center justify-center w-20 h-20 mb-8 relative">
+    <div class="absolute inset-0 border border-[var(--mp-brass-dim)] rounded-sm"></div>
+    <div class="absolute inset-1.5 border border-[var(--mp-hairline-2)] rounded-sm"></div>
+    <span class="mp-display text-[var(--mp-brass-bright)] text-4xl">M</span>
+  </div>
+
+  <div class="mp-eyebrow mb-3">Established 2026</div>
+  <h1 class="mp-display text-[56px] leading-[0.95] tracking-tight mb-3">Metropolis <span class="mp-italic text-[var(--mp-brass)]">Chess Club</span></h1>
+
+  <div class="mp-brass-rule max-w-md mx-auto mb-7"></div>
+
+  <p class="text-[17px] text-[var(--mp-ink-muted)] mb-3 max-w-xl mx-auto leading-relaxed">
+    Play chess against AI characters with <span class="mp-italic text-[var(--mp-ink)]">backstories</span>, personalities, and memories.
   </p>
-  <p class="text-neutral-400 text-sm mb-10">
-    Pick one of our presets or craft your own. They'll remember your games.
+  <p class="text-[14px] text-[var(--mp-ink-faint)] mb-10 max-w-lg mx-auto">
+    Pick one of our house characters or craft your own. They remember your games.
   </p>
-  <a href="/login" class="inline-block rounded bg-emerald-500 px-6 py-3 font-medium text-neutral-900 hover:bg-emerald-400">
-    Log in to get started →
+
+  <a href="/login" class="mp-btn mp-btn-brass text-[14px]" style="padding: 0.75rem 1.5rem;">
+    Log in to get started
+    <span>›</span>
   </a>
 </div>
 {% endblock %}

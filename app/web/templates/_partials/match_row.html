@@ -2,27 +2,32 @@
 {% from "_partials/_macros.html" import result_chip %}
 {% set href = '/matches/' + m.match_id + '/watch' if m.status == 'in_progress' else '/matches/' + m.match_id + '/summary' %}
 <a href="{{ href }}"
-   class="flex items-center gap-4 rounded-lg border border-neutral-800 bg-neutral-900 hover:border-neutral-600 hover:bg-neutral-800/60 transition px-4 py-3">
-  <div class="text-2xl">{{ m.character_avatar }}</div>
+   class="mp-panel-raised group flex items-center gap-4 rounded-sm transition relative"
+   style="padding: 0.9rem 1rem;">
+  <div class="shrink-0 w-11 h-11 flex items-center justify-center border border-[var(--mp-hairline-2)] bg-[var(--mp-surface-1)] rounded-sm text-xl leading-none">
+    {{ m.character_avatar }}
+  </div>
   <div class="flex-1 min-w-0">
-    <div class="flex items-center gap-2">
-      <div class="font-medium truncate">{{ m.character_name }}</div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="mp-display text-[17px] text-[var(--mp-ink)] truncate group-hover:text-[var(--mp-brass-bright)] transition">{{ m.character_name }}</span>
       {{ result_chip(m) }}
     </div>
-    <div class="text-xs text-neutral-500 truncate">
-      vs. @{{ m.player_username }} · move {{ m.move_count }}
+    <div class="text-[11px] text-[var(--mp-ink-faint)] truncate mt-1 mp-mono uppercase tracking-[0.1em]">
+      vs <span class="text-[var(--mp-ink-muted)] normal-case tracking-normal">@{{ m.player_username }}</span>
+      <span class="text-[var(--mp-ink-ghost)]"> · </span>
+      move {{ m.move_count }}
       {% if m.status == 'in_progress' %}
-        · started {{ m.started_at.strftime('%H:%M') }}
+        <span class="text-[var(--mp-ink-ghost)]"> · </span>started {{ m.started_at.strftime('%H:%M') }}
       {% elif m.ended_at %}
-        · ended {{ m.ended_at.strftime('%Y-%m-%d %H:%M') }}
+        <span class="text-[var(--mp-ink-ghost)]"> · </span>{{ m.ended_at.strftime('%Y-%m-%d %H:%M') }}
       {% endif %}
     </div>
   </div>
-  <div class="text-xs text-neutral-500">
+  <div class="text-[11px] text-[var(--mp-ink-faint)] mp-mono uppercase tracking-[0.15em] shrink-0">
     {% if m.status == 'in_progress' %}
-      <span class="text-emerald-300">Watch →</span>
+      <span class="text-[var(--mp-brass)] group-hover:text-[var(--mp-brass-bright)]">Watch ›</span>
     {% else %}
-      <span class="text-neutral-400">Summary →</span>
+      <span class="group-hover:text-[var(--mp-ink)]">Summary ›</span>
     {% endif %}
   </div>
 </a>

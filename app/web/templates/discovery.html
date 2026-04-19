@@ -3,61 +3,63 @@
 {% block title %}Discovery — Metropolis Chess Club{% endblock %}
 
 {% block content %}
-<div class="flex items-end justify-between mb-6">
+<div class="flex items-end justify-between mb-10 mp-enter mp-enter-1">
   <div>
-    <h1 class="text-2xl font-semibold">Discovery</h1>
-    <p class="text-sm text-neutral-400">Live matches right now, recent finishes, and every character you can play.</p>
+    <div class="mp-eyebrow mb-2">The floor tonight</div>
+    <h1 class="mp-display text-[44px] leading-[0.95] tracking-tight">Discovery</h1>
+    <p class="text-[14px] text-[var(--mp-ink-muted)] mt-3 max-w-lg">
+      Live matches right now, recent finishes, and every character you can play.
+    </p>
   </div>
-  <div class="flex items-center gap-3 text-sm">
-    <a href="/leaderboard/characters" class="text-neutral-400 hover:text-white">Leaderboards →</a>
+  <div class="text-right">
+    <a href="/leaderboard/characters" class="mp-btn mp-btn-ghost">
+      Leaderboards
+      <span class="text-[var(--mp-brass)]">›</span>
+    </a>
   </div>
 </div>
 
-<section class="mb-10">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="text-sm uppercase tracking-wider text-neutral-400">Live right now</h2>
-    <span class="text-xs text-neutral-500">{{ live_matches|length }} match{{ '' if live_matches|length == 1 else 'es' }}</span>
+<section class="mb-12 mp-enter mp-enter-2">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="mp-eyebrow">Live right now</h2>
+    <span class="mp-mono text-[11px] text-[var(--mp-ink-faint)]">{{ live_matches|length }} match{{ '' if live_matches|length == 1 else 'es' }}</span>
   </div>
   {% if live_matches %}
   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-    {% for m in live_matches %}
-      {% include "_partials/match_row.html" %}
-    {% endfor %}
+    {% for m in live_matches %}{% include "_partials/match_row.html" %}{% endfor %}
   </div>
   {% else %}
-  <div class="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-8 text-center text-sm text-neutral-500">
-    No live matches right now. Start your own below.
+  <div class="mp-panel rounded-sm px-4 py-10 text-center">
+    <div class="mp-display italic text-[var(--mp-ink-faint)] text-lg">Quiet floor.</div>
+    <div class="text-[13px] text-[var(--mp-ink-faint)] mt-1">Start your own match below.</div>
   </div>
   {% endif %}
 </section>
 
-<section class="mb-10">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="text-sm uppercase tracking-wider text-neutral-400">Recently finished</h2>
+<section class="mb-12 mp-enter mp-enter-3">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="mp-eyebrow">Recently finished</h2>
   </div>
   {% if recent_matches %}
   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-    {% for m in recent_matches %}
-      {% include "_partials/match_row.html" %}
-    {% endfor %}
+    {% for m in recent_matches %}{% include "_partials/match_row.html" %}{% endfor %}
   </div>
   {% else %}
-  <div class="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-8 text-center text-sm text-neutral-500">
+  <div class="mp-panel rounded-sm px-4 py-10 text-center text-sm text-[var(--mp-ink-faint)]">
     Nothing finished yet.
   </div>
   {% endif %}
 </section>
 
-<section>
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="text-sm uppercase tracking-wider text-neutral-400">Characters to play</h2>
-    <a href="/characters/new" class="text-xs text-emerald-400 hover:underline">+ New character</a>
+<section class="mp-enter mp-enter-3">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="mp-eyebrow">Characters to play</h2>
+    <a href="/characters/new" class="text-[11px] mp-mono uppercase tracking-[0.15em] text-[var(--mp-brass)] hover:text-[var(--mp-brass-bright)]">+ New character</a>
   </div>
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-    {% for c in characters %}
-      {% include "_partials/character_card.html" %}
+    {% for c in characters %}{% include "_partials/character_card.html" %}
     {% else %}
-    <div class="col-span-full text-center py-8 text-neutral-500">
+    <div class="col-span-full text-center py-10 text-[var(--mp-ink-faint)]">
       No characters available at your content rating.
     </div>
     {% endfor %}
