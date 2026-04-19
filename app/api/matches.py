@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+# Phase 3b: clients hitting the REST gameplay endpoints get a visible header
+# pointing at the Socket.IO /play namespace. The REST path stays functional as a
+# fallback until Phase 4, at which point it can be 410'd.
+_DEPRECATED_HEADER_KEY = "X-Deprecated"
+_DEPRECATED_HEADER_VAL = "Use Socket.IO /play namespace (Phase 3b)"
+
+
+def _mark_rest_deprecated(response: Response) -> None:
+    response.headers[_DEPRECATED_HEADER_KEY] = _DEPRECATED_HEADER_VAL
 
 from app.auth import require_player
 from app.db import get_session
@@ -118,9 +128,11 @@ def get_match(
 async def submit_move(
     match_id: str,
     payload: MoveSubmit,
+    response: Response,
     player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> MoveResponse:
+    _mark_rest_deprecated(response)
     # Match must belong to the logged-in player.
     try:
         m = service.get_match(session, match_id)
@@ -170,9 +182,11 @@ async def submit_move(
 @router.post("/{match_id}/resign", response_model=MatchRead)
 def resign_match(
     match_id: str,
+    response: Response,
     player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> MatchRead:
+    _mark_rest_deprecated(response)
     try:
         match_check = service.get_match(session, match_id)
     except MatchNotFound:
