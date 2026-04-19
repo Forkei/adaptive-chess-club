@@ -96,6 +96,10 @@
         <span class="mp-livedot" style="background: var(--mp-brass-bright); box-shadow: 0 0 0 0 rgba(201,166,107,0.55);"></span>
         <span>{{ character.name }} is thinking<span id="thinking-eta"></span>…</span>
       </div>
+      <div id="composing-banner" class="hidden flex items-center gap-2 text-[13px] text-[var(--mp-ink-blue-alt)]">
+        <span class="mp-livedot" style="background: var(--mp-ink-blue-alt); box-shadow: 0 0 0 0 rgba(141,164,195,0.55);"></span>
+        <span>{{ character.name }} is composing a reply…</span>
+      </div>
     </div>
     <div id="memory-ribbon" class="hidden mt-5 text-[13px] italic text-[var(--mp-ink-muted)] border-l-2 pl-4 memory-ribbon"
          style="border-color: var(--mp-brass-dim); background: linear-gradient(90deg, rgba(201,166,107,0.05), transparent);">
@@ -196,6 +200,25 @@
     const etaEl = document.getElementById('thinking-eta');
     if (etaSeconds && on) etaEl.textContent = ` (~${etaSeconds}s)`;
     else etaEl.textContent = '';
+  }
+
+  // Phase 4 of the streamed turn (after agent_move, before agent_chat) is
+  // when Soul is composing. Show a distinct pill so the user can tell
+  // "engine still thinking" from "character picking words". Auto-hides after
+  // COMPOSING_FALLBACK_MS in case Soul returns speak=null (no agent_chat
+  // will fire) or fails silently.
+  const COMPOSING_FALLBACK_MS = 5000;
+  let composingTimer = null;
+  function setComposing(on) {
+    const el = document.getElementById('composing-banner');
+    el.classList.toggle('hidden', !on);
+    if (composingTimer) { clearTimeout(composingTimer); composingTimer = null; }
+    if (on) {
+      composingTimer = setTimeout(() => {
+        document.getElementById('composing-banner').classList.add('hidden');
+        composingTimer = null;
+      }, COMPOSING_FALLBACK_MS);
+    }
   }
   function setEmotion(emotion, intensity) {
     const el = document.getElementById('emotion-indicator');
@@ -386,9 +409,12 @@
     });
     awaitingAgent = false;
     setThinking(false);
+    // Engine is done; Soul is now composing a reply (or deciding not to).
+    setComposing(true);
   });
 
   socket.on('agent_chat', (payload) => {
+    setComposing(false);
     if (payload.speak) addChatBubble('agent', payload.speak);
     setEmotion(payload.emotion, payload.emotion_intensity);
   });
