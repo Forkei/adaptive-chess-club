@@ -172,18 +172,22 @@ def _load_last_chat_lines(session, match_id: str, limit: int = 5) -> list[str]:
 
 
 def _load_last_player_context(session, match_id: str) -> tuple[str | None, str | None]:
-    rows = list(
-        session.execute(
-            select(Move)
-            .where(Move.match_id == match_id)
-            .order_by(Move.move_number.desc())
-            .limit(6)
-        ).scalars()
+    """See `app.matches.service._load_last_player_context` — mirrored here for
+    the streaming turn loop (doesn't import from service to avoid cycles)."""
+    match = session.get(Match, match_id)
+    if match is None:
+        return None, None
+    player_side = match.player_color
+    stmt = (
+        select(Move)
+        .where(Move.match_id == match_id, Move.side == player_side)
+        .order_by(Move.move_number.desc())
+        .limit(1)
     )
-    for mv in rows:
-        if mv.player_chat_before is not None or mv.agent_chat_after is None:
-            return mv.uci, mv.player_chat_before
-    return None, None
+    mv = session.execute(stmt).scalar_one_or_none()
+    if mv is None:
+        return None, None
+    return mv.uci, mv.player_chat_before
 
 
 def _opponent_profile_for(session, *, character_id: str, player_id: str) -> OpponentProfile | None:

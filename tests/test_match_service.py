@@ -228,6 +228,55 @@ def test_resign_ends_match(_force_mock_only):
     assert match.result.value == "black_win"
 
 
+def test_load_last_player_context_uses_side_not_heuristic():
+    """Regression: Soul-silent character moves (agent_chat_after=None) must not
+    be misidentified as player moves. Side-based lookup fixes it.
+    """
+    from app.matches.service import _load_last_player_context
+    from app.models.match import Color, Match, MatchStatus, Move, Player
+    from app.models.character import Character, CharacterState
+    import chess
+
+    with SessionLocal() as sess:
+        char = Character(
+            name="Silent", aggression=5, risk_tolerance=5, patience=5, trash_talk=5,
+            target_elo=1400, current_elo=1400, floor_elo=1400, max_elo=1800,
+            adaptive=True, state=CharacterState.READY,
+        )
+        sess.add(char)
+        from app.auth import generate_guest_username
+        player = Player(username=generate_guest_username(), display_name="P")
+        sess.add(player)
+        sess.commit()
+        # Player is white; character is black.
+        match = Match(
+            character_id=char.id, player_id=player.id,
+            player_color=Color.WHITE, status=MatchStatus.IN_PROGRESS,
+            initial_fen=chess.STARTING_FEN, current_fen=chess.STARTING_FEN,
+            move_count=2, character_elo_at_start=1400,
+        )
+        sess.add(match)
+        sess.commit()
+        # Move 1: player (white) — with chat.
+        sess.add(Move(
+            match_id=match.id, move_number=1, side=Color.WHITE,
+            uci="e2e4", san="e4", fen_after=chess.STARTING_FEN,
+            player_chat_before="hello",
+        ))
+        # Move 2: character (black) — Soul was silent (agent_chat_after=None).
+        sess.add(Move(
+            match_id=match.id, move_number=2, side=Color.BLACK,
+            uci="e7e5", san="e5", fen_after=chess.STARTING_FEN,
+            agent_chat_after=None,
+        ))
+        sess.commit()
+
+        uci, chat = _load_last_player_context(sess, match.id)
+        # Must return the PLAYER's move (e2e4), not the silent character move.
+        assert uci == "e2e4"
+        assert chat == "hello"
+
+
 def test_abandon_for_disconnect_ends_match():
     """Disconnect-timeout path sets ABANDONED status (rage-quit bucket)."""
     import asyncio as _asyncio

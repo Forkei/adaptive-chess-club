@@ -373,24 +373,26 @@ def _load_last_player_context(session: Session, match_id: str) -> tuple[str | No
 
     Used by the Subconscious to key its cache and to condition retrieval on
     what the opponent just did.
+
+    Proper side tracking: the player plays `match.player_color`; the character
+    plays the opposite. The previous heuristic (`player_chat_before not None or
+    agent_chat_after is None`) misidentified Soul-silent character moves as
+    player moves, polluting `last_player_uci` + `last_player_chat`.
     """
+    match = session.get(Match, match_id)
+    if match is None:
+        return None, None
+    player_side = match.player_color
     stmt = (
         select(Move)
-        .where(Move.match_id == match_id)
+        .where(Move.match_id == match_id, Move.side == player_side)
         .order_by(Move.move_number.desc())
-        .limit(6)
+        .limit(1)
     )
-    rows = list(session.execute(stmt).scalars())
-    for mv in rows:
-        # "Side" here refers to the color that played the move. The player's
-        # side is match.player_color; but since Move stores Color, we can
-        # filter by side matching the player's color. We don't have the
-        # match object here; caller passes player_color separately if needed.
-        # Cheap shortcut: the player's chat lives on a Move whose
-        # player_chat_before is set — skip move-color inference.
-        if mv.player_chat_before is not None or mv.agent_chat_after is None:
-            return mv.uci, mv.player_chat_before
-    return None, None
+    mv = session.execute(stmt).scalar_one_or_none()
+    if mv is None:
+        return None, None
+    return mv.uci, mv.player_chat_before
 
 
 def _opponent_profile_for(
