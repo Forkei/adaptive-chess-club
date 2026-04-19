@@ -68,6 +68,18 @@ to avoid forcing lines", "chats more than they move"). One short sentence, your 
 """
 
 
+_TIME_AWARENESS_RULES = """\
+TIME AWARENESS
+The user prompt may include a "TIMING" block with how long the player took on
+their last move, their average so far, and total elapsed match time. Use it to ground
+any reference to pace.
+- Do NOT accuse the player of being slow unless `player_took_seconds > 60`
+  OR `player_took_seconds > 3 * player_average_so_far`.
+- Casual references to fast play are fine whenever the data supports them.
+- If no timing block is present, do not speculate about tempo at all.
+"""
+
+
 def build_system_prompt(character: Character) -> str:
     frags = style_to_prompt_fragments(character)
     elo_line = (
@@ -115,6 +127,8 @@ Openings you know and prefer: {opening_pref}
 {_MOOD_OUTPUT_RULES}
 
 {_OPPONENT_NOTE_RULES}
+
+{_TIME_AWARENESS_RULES}
 
 `referenced_memory_ids` must only contain IDs from the surfaced memories in the user prompt.
 Empty list is fine if no memory was actually relevant. Do not invent IDs.

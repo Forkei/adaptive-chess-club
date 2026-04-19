@@ -144,6 +144,54 @@ def test_soul_response_accepts_silent_output():
     assert r.referenced_memory_ids == []
 
 
+def test_soul_prompt_includes_timing_when_supplied():
+    """Patch Pass 2 Item 4: timing data must reach the prompt with the
+    accuse-slow threshold guidance attached."""
+    surfaced = _surfaced([])
+    inp = SoulInput(
+        board=_soul_input(surfaced).board,
+        mood=MoodState(aggression=0.5, confidence=0.5, tilt=0.0, engagement=0.5),
+        surfaced_memories=surfaced,
+        recent_chat=[],
+        engine_move_san="Nf3",
+        engine_move_uci="g1f3",
+        engine_eval_cp=10,
+        engine_considered=[],
+        engine_time_ms=200,
+        move_number=5,
+        game_phase="opening",
+        match_id="m-timing",
+        character_color="white",
+        opponent_last_san="e5",
+        opponent_last_uci="e7e5",
+        player_took_seconds=12.3,
+        player_average_seconds=8.7,
+        elapsed_total_seconds=420.0,
+    )
+    resp = SoulResponse(speak=None, emotion="neutral", emotion_intensity=0.2)
+    fake = _FakeLLMReturning(resp)
+    run_soul(_char(), inp, llm=fake)
+
+    assert fake.last_prompt is not None
+    prompt = fake.last_prompt
+    assert "=== TIMING ===" in prompt
+    assert "PLAYER TOOK: 12.3 seconds" in prompt
+    assert "PLAYER'S AVERAGE MOVE TIME SO FAR: 8.7 seconds" in prompt
+    assert "ELAPSED TOTAL MATCH TIME: 7.0 minutes" in prompt
+    assert "Do not accuse the player of being slow" in prompt
+
+
+def test_soul_prompt_omits_timing_block_when_no_data():
+    surfaced = _surfaced([])
+    inp = _soul_input(surfaced)
+    resp = SoulResponse(speak=None, emotion="neutral", emotion_intensity=0.2)
+    fake = _FakeLLMReturning(resp)
+    run_soul(_char(), inp, llm=fake)
+    assert fake.last_prompt is not None
+    # No timing section when no data supplied.
+    assert "=== TIMING ===" not in fake.last_prompt
+
+
 def test_soul_prompt_labels_engine_move_and_player_move_unambiguously():
     """Regression for the Ng1 misattribution bug.
 

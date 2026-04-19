@@ -408,6 +408,56 @@ def _load_last_chat_lines(session: Session, match_id: str, limit: int = 5) -> li
     return out[-limit:]
 
 
+def _compute_player_timings(session: Session, match: Match) -> tuple[float | None, float | None, float | None]:
+    """Return (player_last_seconds, player_avg_seconds, elapsed_total_seconds).
+
+    - player_last_seconds: time between the character's previous move
+      (or match start if none) and the most recent player move, in seconds.
+    - player_avg_seconds: mean of all such intervals across the player's
+      moves so far this match.
+    - elapsed_total_seconds: wall time from match start to now.
+
+    All values are None until enough data exists (e.g. no player moves yet).
+    """
+    from datetime import datetime as _dt
+
+    player_side = match.player_color
+    player_moves = list(
+        session.execute(
+            select(Move)
+            .where(Move.match_id == match.id, Move.side == player_side)
+            .order_by(Move.move_number.asc())
+        ).scalars()
+    )
+    if not player_moves:
+        # No player moves yet (character opens as white).
+        elapsed = (_dt.utcnow() - (match.started_at or _dt.utcnow())).total_seconds()
+        return None, None, max(0.0, elapsed)
+
+    # For each player move, its "think time" = its created_at minus the
+    # previous character move's created_at (or match.started_at for the
+    # very first player move).
+    char_moves = list(
+        session.execute(
+            select(Move)
+            .where(Move.match_id == match.id, Move.side != player_side)
+            .order_by(Move.move_number.asc())
+        ).scalars()
+    )
+    intervals: list[float] = []
+    for pm in player_moves:
+        prior_char = next((c for c in reversed(char_moves) if c.move_number < pm.move_number), None)
+        prev_ts = prior_char.created_at if prior_char else (match.started_at or pm.created_at)
+        delta = (pm.created_at - prev_ts).total_seconds()
+        if delta >= 0:
+            intervals.append(delta)
+
+    last = intervals[-1] if intervals else None
+    avg = (sum(intervals) / len(intervals)) if intervals else None
+    elapsed = (_dt.utcnow() - (match.started_at or _dt.utcnow())).total_seconds()
+    return last, avg, max(0.0, elapsed)
+
+
 def _load_last_player_san(session: Session, match_id: str) -> str | None:
     match = session.get(Match, match_id)
     if match is None:
@@ -500,6 +550,7 @@ def _run_agents_sync(
     last_player_uci, last_player_chat = _load_last_player_context(session, match.id)
     last_player_san = _load_last_player_san(session, match.id)
     character_color_str = "black" if match.player_color == Color.WHITE else "white"
+    player_took_s, player_avg_s, elapsed_s = _compute_player_timings(session, match)
 
     # Pull the most recent SAN moves for retrieval context.
     last_move_rows = list(
@@ -561,6 +612,9 @@ def _run_agents_sync(
         character_color=character_color_str,
         opponent_last_san=last_player_san,
         opponent_last_uci=last_player_uci,
+        player_took_seconds=player_took_s,
+        player_average_seconds=player_avg_s,
+        elapsed_total_seconds=elapsed_s,
     )
 
     soul_resp = run_soul(character, soul_input)

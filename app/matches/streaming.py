@@ -470,6 +470,7 @@ async def _run_engine_and_agents(
         last_player_uci, last_player_chat = _load_last_player_context(session, match.id)
         last_player_san = _load_last_player_san(session, match.id)
         character_color_str = "black" if match.player_color == Color.WHITE else "white"
+        player_took_s, player_avg_s, elapsed_s = _svc._compute_player_timings(session, match)
         last_move_rows = list(
             session.execute(
                 select(Move)
@@ -605,6 +606,9 @@ async def _run_engine_and_agents(
             character_color=character_color_str,
             opponent_last_san=last_player_san,
             opponent_last_uci=last_player_uci,
+            player_took_seconds=player_took_s,
+            player_average_seconds=player_avg_s,
+            elapsed_total_seconds=elapsed_s,
         )
         return run_soul(character, soul_input)
 
