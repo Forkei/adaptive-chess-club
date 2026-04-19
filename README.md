@@ -16,8 +16,12 @@ A **Subconscious** agent retrieves relevant memories every turn and feeds them t
 |-------|-------|-------|
 | **1**   | Character data model, backstory → memories generator, presets, REST/HTML UI | ✅ shipped |
 | **2a**  | Engines + Director + mood + Redis + match lifecycle + playable board (character is silent) | ✅ shipped |
-| **2b**  | Subconscious (sqlite-vec retrieval), Soul (chat responses with tool-use), OpponentProfile, post-match processor | ⏳ next |
-| **3**   | Real-time chat (Socket.IO), mood evolution from chat, disconnect handling, scheduler | ⏳ future |
+| **2b-1**| Embeddings + Subconscious (multi-axis retrieval, 3-move cache) + Soul (structured chat/mood/opponent notes) wired into `/move` | ✅ shipped |
+| **2b-2**| Post-match processor (engine analysis, feature extraction, Elo ratchet application, memory generation, narrative summary, background threading, status polling) | ✅ shipped |
+| **2b-3**| UI polish (chat log, memory ribbon, emotion indicator, post-match summary) + live end-to-end test | ⏳ next |
+| **3a**  | Username login, character ownership, content rating, Alembic migrations | ✅ shipped |
+| **3b**  | Socket.IO real-time chat, mood evolution from chat, disconnect handling | ⏳ future |
+| **3c**  | Match discovery, leaderboard, frontend polish | ⏳ future |
 
 ### What 2a adds
 
@@ -44,6 +48,50 @@ A **Subconscious** agent retrieves relevant memories every turn and feeds them t
 - **Playable HTML UI** at `/matches/{id}` — `chess.js` + `chessboard.js` via CDN, board + move list, resign button. No chat field in 2a.
 - **Character state gets 3 new Elo fields**: `current_elo`, `floor_elo`, `max_elo`. **Phase 1 DBs are incompatible** — delete the SQLite file when upgrading.
 
+### What 2b Slice 1 adds
+
+- **Embedding pipeline** (`app/memory/embeddings.py`): single `sentence-transformers/all-MiniLM-L6-v2` instance, lazy-loaded, reused for all memory embeddings (384 dims). Memories are embedded inline at creation in `bulk_create`; the backfill script (`scripts/backfill_embeddings.py`) covers pre-2b rows.
+- **Vector store** (`app/memory/vector_store.py`): thin interface over an `embedding` JSON column on `Memory`. Cosine similarity computed in-Python with numpy. For a corpus of ~40-50 memories per character × a handful of characters, in-memory scoring is sub-millisecond; the interface (`upsert`, `search`, `get_embedding`) is stable so Phase 3 can swap in sqlite-vec without touching callers. On a pre-existing SQLite DB the `memories.embedding` column is added idempotently at startup (`ensure_embedding_column`).
+- **Subconscious** (`app/agents/subconscious.py`): runs before the Soul on every character turn. Multi-axis scoring — **semantic** (0.35) · **trigger** (0.25) · **opponent** (0.15) · **mood alignment** (0.10) · **recency penalty** (-0.15). If top-1 beats top-2 by `> 0.15`, return top-5 directly; otherwise send top-8 to Gemini Flash Lite for structured re-rank with one-sentence `retrieval_reason` per memory. Per-match cache with TTL = 3 character turns keyed by `(last_player_uci, chat_hash, mood_polarity_bucket)` — cached returns carry `from_cache=True` and do NOT re-increment `surface_count`.
+- **Soul** (`app/agents/soul.py`): runs after the engine move on every character turn. Structured output (`SoulResponse`) containing `speak` (nullable — silence is the default), `emotion` + `emotion_intensity`, `mood_deltas` (±0.1 per axis), `note_about_opponent` (queued for post-match), `referenced_memory_ids` (sanitized to be a subset of the surfaced set), and an optional `internal_thinking` debug field. Voice rules, mood distortion, and speaking discipline live in the system prompt; per-turn dynamic context lives in the user prompt. LLM failures silently degrade to a neutral silent response so gameplay never stalls.
+- **Mood polarity buckets** (`app/agents/retrieval.py`): `deflated / tense / guarded / steady / confident / dominant`, derived from a weighted composite of confidence, aggression, tilt, and engagement. Used for Subconscious cache keying and available to downstream UI snippets.
+- **Match service integration**: `apply_player_move` now accepts `player_chat`, runs Subconscious → Soul after the engine move, applies `mood_deltas` to raw mood and re-smooths, and persists `agent_chat_after` / `surfaced_memory_ids` on the Move row. `note_about_opponent` is queued into `match.extra_state['pending_opponent_notes']` for Slice 2. The HTTP response adds an `agent_turn` field with `speak`, `emotion`, `emotion_intensity`, and surfaced memory snippets for the UI.
+- **`MoveSubmit.chat`**: optional string (≤500 chars) the player attaches to their move; stored on `Move.player_chat_before` and visible to the Subconscious next turn.
+
+### What 2b Slice 2 adds
+
+The post-match processor runs the moment a match finalizes (natural end or resign) in a daemon thread, so the HTTP response for the final move returns immediately. A new row in `match_analyses` tracks per-match state; clients poll `GET /api/matches/{id}/post_match_status` every ~2 s to get `status` (`pending / running / completed / failed`), `steps_completed`, error messages, and final outputs (Elo delta, critical moments, generated memories, updated narrative summary).
+
+Pipeline (5 steps, each in its own try/except — partial success leaves later steps degraded but not broken):
+
+1. **Engine analysis** (`app/post_match/analysis.py`): Stockfish replays every position at 0.3 s/move, recording `eval_before / eval_after / best_move / eval_loss` and flagging blunders (eval_loss ≥ 200 cp). When Stockfish is unavailable, this step records `status=skipped` and downstream steps proceed with lighter signals. `identify_critical_moments` picks the top ~6 moves by a `loss × 2 + swing − 150` score — blunders and sign-flips dominate.
+2. **Feature extraction** (`app/post_match/features.py`): computes player-side `aggression_index` (captures/checks/promotions), `typical_opening_eco/name/group` via the new `classify_opening(san_moves)` helper, `blunder_rate` normalized per 40 moves, `time_trouble_blunders` in the last 10 half-moves, `preferred_trades` per piece type, and `phase_strengths` (mean eval loss per opening/middlegame/endgame). `merge_features(previous, new, prior_games)` runs a weighted running average so multi-match profiles drift rather than snap.
+3. **Elo ratchet** (`app/post_match/elo_apply.py`): `outcome_delta = win(+200) / draw(0) / loss(-200)`; `move_quality_delta = clamp((opponent_total − character_total)/10, ±100)` over summed per-move blunder magnitudes clamped at 300 cp; raw halved when `match.move_count < 10`; abandoned matches use outcome only. Applied via `apply_elo_ratchet` from Phase 2a — 10 % gain, ±30 per match clamp, floor ratchet `+25` when the last three matches sit ≥ 100 above the floor.
+4. **Memory generation** (`app/post_match/memory_gen.py`): LLM (`google-genai` structured output, `list[_MatchMemory]`) receives character voice + match outcome + critical moments + opponent features (before + after) + drained `pending_opponent_notes` + a few-shot of existing memories. Asks for 1–3 memories scoped `MATCH_RECAP` / `OPPONENT_SPECIFIC`, validates that every memory has ≥ 3 triggers, retries once with explicit feedback if any memory falls short, then embeds and persists via `bulk_create(embed=True)`.
+5. **Narrative summary** (`app/post_match/memory_gen.py`): second LLM call rewrites `OpponentProfile.narrative_summary` — first-person, ≤ 3 sentences, updates rather than replaces.
+
+Rage-quit handling: `match.status == ABANDONED` skips move-quality and tells the memory generator to treat the match as rage-quit, letting the LLM's voice judge whether the character is bitter or amused.
+
+### What 3a adds
+
+- **Username login** (no password, no real auth — this is still a toy):
+  - `GET /login` → username form; `POST /login` creates the account if new, reuses it if the username exists. Existing guest cookies can claim a real username (renames the row, preserves matches and memories).
+  - `GET /logout` clears the cookie.
+  - `GET /api/me` returns the current `Player` or 401.
+  - Protected routes: HTML redirects to `/login`, API returns 401. Open: `/`, `/login`, `/logout`, `/api/me`, static assets.
+  - Username rules: lowercase letters/digits/underscore, 3–24 chars, case-insensitive.
+- **Character ownership**:
+  - `Character.owner_id` (NULL = system-owned preset). Non-preset characters created pre-3a were reassigned on migration to a synthetic `legacy_system` Player (`display_name="Legacy"`).
+  - `Visibility` enum (`public` / `private`). Private characters are 404 for non-owners.
+  - Owner-only: `PATCH /api/characters/{id}`, `DELETE /api/characters/{id}`, `POST /api/characters/{id}/regenerate_memories`.
+  - Anyone can `POST /api/characters/{id}/clone` — copies sheet, voice, quirks, sliders; clone gets fresh Elo state + fresh memory generation (independent of source's generation state). Memories are not copied.
+  - Presets cannot be edited or deleted (403). Clone them first.
+- **Content rating**:
+  - Per-character `content_rating` enum: `family` / `mature` / `unrestricted`. Presets: Viktor + Kenji are `mature`; Margot + Archibald are `family`.
+  - Per-player `max_content_rating`: characters rated above this are filtered out of listings; direct access returns 404 on `/api/` and a friendly "hidden by your content preference" page on `/characters/{id}`.
+  - Rating is injected into every prose-producing LLM prompt: backstory memory generation, Soul system prompt, post-match memory generation, narrative summary. See `app/characters/content_rating_prompts.py`.
+  - Player settings page (`/settings`) lets users edit `display_name` and `max_content_rating`. Username is immutable in 3a.
+
 ### What's deliberately NOT in 2a
 
 - No Subconscious, Soul, or post-match processor
@@ -57,6 +105,8 @@ A **Subconscious** agent retrieves relevant memories every turn and feeds them t
 **Supported dev targets:** macOS, Linux, Windows via WSL2. The Dockerfile is the contract — that's where Stockfish, Maia-2, and all engine deps are known to work. Windows-native is not supported.
 
 ### Docker (recommended)
+
+**On Windows (WSL2):** Clone the repo to WSL, or open the Windows folder from inside WSL with `cd /mnt/c/path/to/repo`. Then run all Docker commands from a WSL terminal. First build takes 10–20 minutes — Maia-2 weights download plus torch install.
 
 ```bash
 cp .env.example .env     # add GEMINI_API_KEY if you want memories generated
@@ -120,6 +170,9 @@ app/
 ├── api/characters.py, players.py, matches.py
 └── web/routes.py, templates/
 scripts/setup_engines.py   # idempotent Maia-2 + Stockfish probe
+scripts/smoke_3a.py        # H.6 two-user smoke test for Phase 3a
+alembic/                   # Alembic migrations (Phase 3a+)
+alembic.ini
 Dockerfile, docker-compose.yml
 tests/
 ```
@@ -133,6 +186,29 @@ rm metropolis_chess.db   # or delete the Docker volume `app-data`
 ```
 
 Then restart. Presets reseed with the new values.
+
+## Migrations (introduced in Phase 3a)
+
+We use Alembic for schema migrations starting in 3a. Existing DBs should be stamped at the baseline and then upgraded; fresh DBs can either use the startup `create_all` path or `alembic upgrade head` from scratch.
+
+**For a pre-3a local DB** (what most contributors have):
+```bash
+# From the repo root, with your .venv active
+alembic stamp 0001_initial_baseline     # mark current state as the pre-3a baseline
+alembic upgrade head                    # apply 0002 (Phase 3a: username + ownership + rating)
+```
+The 3a migration:
+- Adds `players.username` (unique, NOT NULL); existing rows get `guest_<short_uuid>`.
+- Adds `players.max_content_rating` (default `family`).
+- Adds `characters.owner_id`, `visibility`, `content_rating`.
+- Creates a `legacy_system` Player and assigns all pre-existing ownerless non-preset characters to them (so they stay accessible after ownership goes live).
+- Applies preset ratings (Viktor + Kenji → mature; Margot + Archibald → family).
+
+**For a fresh DB**: `create_all` at app startup creates the full current schema. Stamp at head to record it:
+```bash
+alembic stamp head
+```
+Or, if you've deleted `metropolis_chess.db` and want Alembic as the sole creation path, run `alembic upgrade head` before starting the app — the 0001 baseline is a no-op, and 0002 is idempotent against already-materialized columns.
 
 ## License
 

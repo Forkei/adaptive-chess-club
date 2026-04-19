@@ -14,6 +14,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, TypeAdapter
 from sqlalchemy.orm import Session
 
+from app.characters.content_rating_prompts import rating_prompt_fragment
 from app.characters.openings import by_eco, by_name
 from app.characters.style import style_to_prompt_fragments
 from app.config import get_settings
@@ -115,11 +116,15 @@ def build_prompt(character: Character, *, target: int, minimum: int, maximum: in
         else f"Consistently plays around {character.target_elo} Elo."
     )
 
+    rating_block = rating_prompt_fragment(character.content_rating)
+
     return f"""\
 You are writing the personal memories of a fictional chess-playing character. These memories
 will be stored in a database and later surfaced to the character during chat and play, to
 give their voice depth and continuity. Write them in first person, as if the character is
 quietly recalling episodes from their own life.
+
+{rating_block}
 
 CHARACTER PROFILE
 Name: {character.name}

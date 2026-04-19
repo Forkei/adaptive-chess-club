@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -15,6 +15,36 @@ class CharacterState(str, enum.Enum):
     GENERATING_MEMORIES = "generating_memories"
     READY = "ready"
     GENERATION_FAILED = "generation_failed"
+
+
+class ContentRating(str, enum.Enum):
+    """How strong the character's tone is permitted to be.
+
+    Also used on Player as a willingness threshold — a player will not see
+    characters whose rating exceeds their `max_content_rating`.
+    """
+
+    FAMILY = "family"
+    MATURE = "mature"
+    UNRESTRICTED = "unrestricted"
+
+
+class Visibility(str, enum.Enum):
+    PUBLIC = "public"
+    PRIVATE = "private"
+
+
+# Ordering: higher index = stronger content. A player whose max is FAMILY
+# cannot see MATURE or UNRESTRICTED characters.
+_RATING_ORDER = [ContentRating.FAMILY, ContentRating.MATURE, ContentRating.UNRESTRICTED]
+
+
+def rating_level(r: ContentRating) -> int:
+    return _RATING_ORDER.index(r)
+
+
+def rating_allowed(character_rating: ContentRating, player_max: ContentRating) -> bool:
+    return rating_level(character_rating) <= rating_level(player_max)
 
 
 def _uuid() -> str:
@@ -72,6 +102,23 @@ class Character(Base):
     preset_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Phase 3a: ownership + visibility + content rating
+    # NULL owner_id = system-owned (presets + legacy-migrated characters use
+    # an explicit `legacy_system` Player; presets always have owner_id NULL).
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("players.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    visibility: Mapped[Visibility] = mapped_column(
+        Enum(Visibility, name="character_visibility"),
+        nullable=False,
+        default=Visibility.PUBLIC,
+    )
+    content_rating: Mapped[ContentRating] = mapped_column(
+        Enum(ContentRating, name="character_content_rating"),
+        nullable=False,
+        default=ContentRating.FAMILY,
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=_now, onupdate=_now
@@ -105,6 +152,15 @@ class Character(Base):
             "state": self.state.value if isinstance(self.state, CharacterState) else self.state,
             "is_preset": self.is_preset,
             "preset_key": self.preset_key,
+            "owner_id": self.owner_id,
+            "visibility": (
+                self.visibility.value if isinstance(self.visibility, Visibility) else self.visibility
+            ),
+            "content_rating": (
+                self.content_rating.value
+                if isinstance(self.content_rating, ContentRating)
+                else self.content_rating
+            ),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

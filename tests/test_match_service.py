@@ -30,6 +30,33 @@ def _reset_engines_and_mood():
     reset_memory_store_for_testing()
 
 
+@pytest.fixture(autouse=True)
+def _stub_agents(monkeypatch):
+    """Keep the LLM and embedding model out of the match-lifecycle tests.
+
+    These tests only care about move ordering, validation, and terminal
+    detection — not the Soul/Subconscious output — so we replace the
+    agents pipeline with a no-op that leaves moves silent.
+    """
+    from app.matches import service as match_service
+    from app.agents.subconscious import clear_cache
+
+    clear_cache()
+
+    async def _noop_agents(*args, **kwargs):
+        return None
+
+    def _sync_noop(*args, **kwargs):
+        return None
+
+    # _run_agents_sync is invoked via asyncio.to_thread with fixed
+    # positional args; patching it to return None makes _engine_turn skip
+    # the chat/mood-delta path while still producing a Move row.
+    monkeypatch.setattr(match_service, "_run_agents_sync", _sync_noop)
+    yield
+    clear_cache()
+
+
 @pytest.fixture
 def _force_mock_only(monkeypatch):
     """Pretend only MockEngine is installed, regardless of host state."""
@@ -64,7 +91,9 @@ def _character(session) -> Character:
 
 
 def _player(session) -> Player:
-    p = Player(display_name="T")
+    from app.auth import generate_guest_username
+
+    p = Player(username=generate_guest_username(), display_name="T")
     session.add(p)
     session.commit()
     return p
@@ -124,7 +153,7 @@ def test_illegal_move_rejected(_force_mock_only):
     assert asyncio.run(_run()) is True
 
 
-def test_out_of_turn_rejected(_force_mock_only):
+def test_out_of_turn_rejected(_force_mock_only):  # noqa: E501
     """Player is black but tries to move first."""
 
     async def _run():
@@ -159,7 +188,7 @@ def test_player_move_then_engine_replies(_force_mock_only):
             s.commit()
             match_id = match.id
         with SessionLocal() as s:
-            player_move, engine_move = await service.apply_player_move(
+            player_move, engine_move, _agent = await service.apply_player_move(
                 s, match_id=match_id, uci="e2e4"
             )
             s.commit()

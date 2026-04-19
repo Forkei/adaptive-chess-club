@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ character.name }} — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-semibold mb-1">Edit {{ character.name }}</h1>
+<p class="text-sm text-neutral-400 mb-6">
+  Editing the backstory does <strong>not</strong> regenerate memories — that's a destructive
+  operation. If you change the backstory meaningfully and want memories to match, run
+  <em>regenerate memories</em> from the detail page.
+</p>
+
+{% set cur_vis = character.visibility.value if character.visibility.value is defined else character.visibility %}
+{% set cur_rating = character.content_rating.value if character.content_rating.value is defined else character.content_rating %}
+
+<form method="post" action="/characters/{{ character.id }}/edit" class="space-y-6 max-w-3xl">
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="md:col-span-2">
+      <label class="block text-sm mb-1">Name (not editable in 3a)</label>
+      <input disabled value="{{ character.name }}" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2 text-neutral-500" />
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Avatar emoji</label>
+      <input name="avatar_emoji" maxlength="4" value="{{ character.avatar_emoji }}" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+    </div>
+  </div>
+
+  <div>
+    <label class="block text-sm mb-1">Short description</label>
+    <input name="short_description" maxlength="280" value="{{ character.short_description }}" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+  </div>
+
+  <div>
+    <label class="block text-sm mb-1">Backstory</label>
+    <textarea name="backstory" rows="8" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2">{{ character.backstory }}</textarea>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm mb-1">Voice / tone</label>
+      <input name="voice_descriptor" maxlength="280" value="{{ character.voice_descriptor }}" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Quirks</label>
+      <input name="quirks" value="{{ character.quirks }}" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2" />
+    </div>
+  </div>
+
+  <fieldset class="space-y-3 rounded border border-neutral-800 p-4">
+    <legend class="px-2 text-sm text-neutral-300">Style sliders (1–10)</legend>
+    {% for key, label, val in [
+      ("aggression", "Aggression", character.aggression),
+      ("risk_tolerance", "Risk tolerance", character.risk_tolerance),
+      ("patience", "Patience", character.patience),
+      ("trash_talk", "Trash talk", character.trash_talk),
+    ] %}
+    <div class="flex items-center gap-4">
+      <label class="text-sm w-32">{{ label }}</label>
+      <input type="range" min="1" max="10" value="{{ val }}" name="{{ key }}"
+             oninput="this.nextElementSibling.value = this.value"
+             class="flex-1 accent-emerald-400" />
+      <output class="text-sm w-6 text-right text-neutral-300">{{ val }}</output>
+    </div>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset class="space-y-3 rounded border border-neutral-800 p-4">
+    <legend class="px-2 text-sm text-neutral-300">Visibility</legend>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="visibility" value="public" {% if cur_vis == 'public' %}checked{% endif %} class="mt-1 accent-emerald-400" />
+      <div><div class="text-sm">Public</div></div>
+    </label>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="visibility" value="private" {% if cur_vis == 'private' %}checked{% endif %} class="mt-1 accent-emerald-400" />
+      <div><div class="text-sm">Private</div></div>
+    </label>
+  </fieldset>
+
+  <fieldset class="space-y-3 rounded border border-neutral-800 p-4">
+    <legend class="px-2 text-sm text-neutral-300">Content rating</legend>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="content_rating" value="family" {% if cur_rating == 'family' %}checked{% endif %} class="mt-1 accent-emerald-400" />
+      <div><div class="text-sm">Family</div></div>
+    </label>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="content_rating" value="mature" {% if cur_rating == 'mature' %}checked{% endif %} class="mt-1 accent-emerald-400" />
+      <div><div class="text-sm">Mature</div></div>
+    </label>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input type="radio" name="content_rating" value="unrestricted" {% if cur_rating == 'unrestricted' %}checked{% endif %} class="mt-1 accent-emerald-400" />
+      <div><div class="text-sm">Unrestricted</div></div>
+    </label>
+  </fieldset>
+
+  <div>
+    <label class="block text-sm mb-1">Opening preferences</label>
+    <select name="opening_preferences" multiple size="10" class="w-full rounded bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm">
+      {% for op in openings %}
+      <option value="{{ op.name }}" {% if op.name in character.opening_preferences %}selected{% endif %}>{{ op.eco }} — {{ op.name }} ({{ op.group }})</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="pt-2">
+    <button class="rounded bg-emerald-500 px-5 py-2 font-medium text-neutral-900 hover:bg-emerald-400">
+      Save
+    </button>
+    <a href="/characters/{{ character.id }}" class="ml-3 text-sm text-neutral-400 hover:text-white">Cancel</a>
+    <form method="post" action="/characters/{{ character.id }}/regenerate" class="inline ml-4"
+          onsubmit="return confirm('Regenerate memories from backstory? This will delete character-lore memories and generate fresh ones.');">
+      <button class="text-xs rounded border border-amber-700 text-amber-200 px-3 py-1.5 hover:bg-amber-950">
+        Regenerate memories
+      </button>
+    </form>
+  </div>
+</form>
+{% endblock %}

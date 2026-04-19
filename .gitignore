@@ -8,9 +8,13 @@ venv/
 env/
 *.db
 *.db-journal
+*.db.*.bak
 logs/
 screenshots/
 .DS_Store
 .idea/
 .vscode/
 .claude/
+
+# Large model weights — fetched by the engine setup script.
+maia2_models/

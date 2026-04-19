@@ -66,4 +66,8 @@ class Memory(Base):
     last_surfaced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     surface_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Phase 2b: semantic retrieval vector. NULL until the memory is embedded
+    # (either at creation via `embed_and_persist` or by the backfill script).
+    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+
     character: Mapped["Character"] = relationship(back_populates="memories")

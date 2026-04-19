@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.models.character import ContentRating
+
 
 @dataclass(frozen=True)
 class PresetSpec:
@@ -27,6 +29,7 @@ class PresetSpec:
     opening_preferences: list[str] = field(default_factory=list)
     voice_descriptor: str = ""
     quirks: str = ""
+    content_rating: ContentRating = ContentRating.FAMILY
 
 
 VIKTOR = PresetSpec(
@@ -65,6 +68,7 @@ VIKTOR = PresetSpec(
         "London System on principle. Keeps a pocket watch and checks it between moves even when "
         "there's no clock."
     ),
+    content_rating=ContentRating.MATURE,
 )
 
 
@@ -103,6 +107,7 @@ MARGOT = PresetSpec(
         "honey from her own hives. Will spend five minutes on a move that only has one reasonable "
         "reply."
     ),
+    content_rating=ContentRating.FAMILY,
 )
 
 
@@ -144,6 +149,7 @@ KENJI = PresetSpec(
         "the queen 'waifu' when he's winning. Will offer a draw as a bit and then resign "
         "ostentatiously when declined."
     ),
+    content_rating=ContentRating.MATURE,
 )
 
 
@@ -185,6 +191,7 @@ ARCHIBALD = PresetSpec(
         "Takes a small notebook to every game and pretends to consult it during thought. Genuinely "
         "believes the computer era is a passing fad."
     ),
+    content_rating=ContentRating.FAMILY,
 )
 
 

@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.characters import router as characters_api
 from app.api.matches import router as matches_api
 from app.api.players import router as players_api
+from app.auth import NotAuthenticated
 from app.characters.seed import seed_presets
 from app.config import get_settings
 from app.db import init_db
@@ -45,6 +47,18 @@ def create_app() -> FastAPI:
     app.include_router(players_api)
     app.include_router(matches_api)
     app.include_router(web_router)
+
+    @app.exception_handler(NotAuthenticated)
+    async def _not_authenticated(request: Request, exc: NotAuthenticated):
+        # API callers expect JSON 401. HTML callers get a redirect to /login.
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+        # Preserve where they were trying to go.
+        next_url = request.url.path
+        if request.url.query:
+            next_url = f"{next_url}?{request.url.query}"
+        return RedirectResponse(url=f"/login?next={next_url}", status_code=303)
+
     return app
 
 

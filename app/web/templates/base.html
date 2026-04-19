@@ -13,19 +13,45 @@
       <a href="/" class="text-xl font-semibold tracking-wide">
         <span class="mr-2">♟</span>Metropolis Chess Club
       </a>
-      <nav class="text-sm text-neutral-300 space-x-4">
+      <nav class="text-sm text-neutral-300 space-x-4 flex items-center">
+        {% if player %}
         <a href="/" class="hover:text-white">Characters</a>
         <a href="/characters/new" class="rounded bg-emerald-500 px-3 py-1.5 font-medium text-neutral-900 hover:bg-emerald-400">
           + New character
         </a>
+        <a href="/settings" class="hover:text-white" title="Settings (@{{ player.username }})">
+          @{{ player.username }}
+        </a>
+        <a href="/logout" class="text-neutral-400 hover:text-white">Logout</a>
+        {% else %}
+        <a href="/login" class="rounded bg-emerald-500 px-3 py-1.5 font-medium text-neutral-900 hover:bg-emerald-400">
+          Log in
+        </a>
+        {% endif %}
       </nav>
     </div>
   </header>
+  {% block flash %}
+    {% if request.query_params.get('flash') %}
+    <div class="max-w-6xl mx-auto px-6 pt-4">
+      <div class="rounded border border-emerald-900/80 bg-emerald-950/40 p-3 text-sm text-emerald-200">
+        {% set fkey = request.query_params.get('flash') %}
+        {% set fuser = request.query_params.get('u') %}
+        {% if fkey == 'welcome' %}Welcome, @{{ fuser }}. Your account was created.
+        {% elif fkey == 'welcome_back' %}Welcome back, @{{ fuser }}.
+        {% elif fkey == 'renamed' %}Your guest account has been renamed to @{{ fuser }}.
+        {% elif fkey == 'saved' %}Settings saved.
+        {% else %}{{ fkey }}
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  {% endblock %}
   <main class="max-w-6xl mx-auto px-6 py-8">
     {% block content %}{% endblock %}
   </main>
   <footer class="max-w-6xl mx-auto px-6 py-8 text-center text-xs text-neutral-500">
-    Phase 1 — characters &amp; memories only. Gameplay arrives in Phase 2.
+    Metropolis Chess Club — Phase 3a: username login, character ownership, content rating.
   </footer>
 </body>
 </html>

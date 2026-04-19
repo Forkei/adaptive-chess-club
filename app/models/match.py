@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -19,6 +20,14 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+from app.models.character import ContentRating
+
+# Username rules (Phase 3a): lowercase letters, digits, underscore; 3-24 chars.
+USERNAME_MIN_LEN = 3
+USERNAME_MAX_LEN = 24
+USERNAME_PATTERN = r"^[a-z0-9_]{3,24}$"
+LEGACY_USERNAME = "legacy_system"
+GUEST_USERNAME_PREFIX = "guest_"
 
 
 class MatchStatus(str, enum.Enum):
@@ -51,7 +60,18 @@ class Player(Base):
     __tablename__ = "players"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    # Phase 3a: username is the login identity. Unique, immutable in 3a
+    # (can be renamed only when an auto-assigned `guest_*` username logs in
+    # and claims a real one).
+    username: Mapped[str] = mapped_column(
+        String(USERNAME_MAX_LEN), nullable=False, unique=True, index=True
+    )
     display_name: Mapped[str] = mapped_column(String(80), nullable=False, default="Guest")
+    max_content_rating: Mapped[ContentRating] = mapped_column(
+        Enum(ContentRating, name="player_max_content_rating"),
+        nullable=False,
+        default=ContentRating.FAMILY,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
 
     matches: Mapped[list["Match"]] = relationship(back_populates="player", lazy="selectin")
@@ -172,3 +192,52 @@ class OpponentProfile(Base):
     # We bump this whenever the style summary decays past its window; helps the
     # Soul decide whether to trust the summary verbatim or treat it as stale.
     features_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class MatchAnalysisStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class MatchAnalysis(Base):
+    """Per-match post-game processing state + outputs.
+
+    One row per match. Created when the match finalizes; updated in-place
+    as the background processor advances through its pipeline. The
+    polling endpoint reads from here.
+    """
+
+    __tablename__ = "match_analyses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    match_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("matches.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    status: Mapped[MatchAnalysisStatus] = mapped_column(
+        Enum(MatchAnalysisStatus, name="match_analysis_status"),
+        nullable=False,
+        default=MatchAnalysisStatus.PENDING,
+    )
+    # Ordered list of step names ("engine_analysis", "feature_extraction",
+    # "elo_ratchet", "memory_generation", "narrative_summary") — for UI progress.
+    steps_completed: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Step outputs
+    engine_analysis: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    features: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    critical_moments: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    elo_delta_raw: Mapped[float | None] = mapped_column(Float, nullable=True)
+    elo_delta_applied: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    floor_raised: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    generated_memory_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
