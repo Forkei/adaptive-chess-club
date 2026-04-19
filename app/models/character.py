@@ -109,12 +109,24 @@ class Character(Base):
         String(36), ForeignKey("players.id", ondelete="SET NULL"), nullable=True, index=True
     )
     visibility: Mapped[Visibility] = mapped_column(
-        Enum(Visibility, name="character_visibility"),
+        Enum(
+            Visibility,
+            name="character_visibility",
+            # Phase 3a: stored as lowercase enum values by the migration's
+            # server_default + raw-SQL backfill. values_callable forces SQLAlchemy
+            # to round-trip as values (not enum names) so pre-3a rows read back cleanly.
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
         nullable=False,
         default=Visibility.PUBLIC,
     )
     content_rating: Mapped[ContentRating] = mapped_column(
-        Enum(ContentRating, name="character_content_rating"),
+        Enum(
+            ContentRating,
+            name="character_content_rating",
+            # Same rationale as visibility above.
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
         nullable=False,
         default=ContentRating.FAMILY,
     )

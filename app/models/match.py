@@ -68,7 +68,12 @@ class Player(Base):
     )
     display_name: Mapped[str] = mapped_column(String(80), nullable=False, default="Guest")
     max_content_rating: Mapped[ContentRating] = mapped_column(
-        Enum(ContentRating, name="player_max_content_rating"),
+        Enum(
+            ContentRating,
+            name="player_max_content_rating",
+            # Phase 3a: lowercase values stored by migration. See Character.visibility.
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
         nullable=False,
         default=ContentRating.FAMILY,
     )
