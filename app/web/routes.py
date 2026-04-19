@@ -870,13 +870,25 @@ def match_summary_page(
     elo_breakdown = None
     if analysis and analysis.elo_delta_raw is not None:
         moves = (analysis.engine_analysis or {}).get("moves") or []
-        comp = compute_elo_delta(match=match, analysis_moves=moves)
+        comp = compute_elo_delta(
+            match=match,
+            analysis_moves=moves,
+            character_elo=match.character_elo_at_start,
+            player_elo=match.player_elo_at_start or player.elo,
+        )
         elo_breakdown = {
-            "outcome": int(comp.outcome_delta),
+            "outcome": round(comp.outcome_delta, 1),
             "move_quality": round(comp.move_quality_delta, 1),
             "raw": round(comp.elo_delta_raw, 1),
             "short_halved": comp.short_match_halved,
             "rage_quit": comp.rage_quit_skipped_quality,
+            "expected": round(comp.expected_score, 3),
+            "actual": round(comp.actual_score, 2),
+            "k": comp.k_factor,
+            "player_raw": round(comp.player_elo_delta_raw, 1),
+            "player_expected": round(comp.player_expected_score, 3),
+            "player_actual": round(comp.player_actual_score, 2),
+            "player_k": comp.player_k_factor,
         }
 
     return templates.TemplateResponse(
@@ -892,6 +904,10 @@ def match_summary_page(
             "elo_after": match.character_elo_at_end or match.character_elo_at_start,
             "elo_delta_applied": analysis.elo_delta_applied if analysis else None,
             "floor_raised": bool(analysis.floor_raised) if analysis else False,
+            "player_elo_before": match.player_elo_at_start,
+            "player_elo_after": match.player_elo_at_end or match.player_elo_at_start,
+            "player_elo_delta_applied": analysis.player_elo_delta_applied if analysis else None,
+            "player_floor_raised": bool(analysis.player_floor_raised) if analysis else False,
             "elo_breakdown": elo_breakdown,
             "critical_moments": list(analysis.critical_moments or []) if analysis else [],
             "generated_memories": generated_memories,

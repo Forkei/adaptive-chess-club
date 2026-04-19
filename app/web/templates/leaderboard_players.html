@@ -7,7 +7,7 @@
     <div class="mp-eyebrow mb-2">Standings · Members</div>
     <h1 class="mp-display text-[40px] leading-[1] tracking-tight">Player leaderboard</h1>
     <p class="text-[13px] text-[var(--mp-ink-muted)] mt-3 max-w-lg">
-      Ranked by win rate against all characters. Minimum 5 matches within the selected window.
+      Ranked by Elo rating. Minimum 5 matches within the selected window.
     </p>
   </div>
   <nav class="flex items-center gap-2 text-[11px] mp-mono uppercase tracking-[0.15em] shrink-0">
@@ -31,6 +31,7 @@
       <tr class="text-left" style="background: var(--mp-surface-2); border-bottom: 1px solid var(--mp-hairline-2);">
         <th class="mp-eyebrow text-left px-4 py-3 w-12">#</th>
         <th class="mp-eyebrow text-left px-4 py-3">Player</th>
+        <th class="mp-eyebrow text-right px-4 py-3">Elo</th>
         <th class="mp-eyebrow text-right px-4 py-3">Win %</th>
         <th class="mp-eyebrow text-right px-4 py-3">W</th>
         <th class="mp-eyebrow text-right px-4 py-3">L</th>
@@ -56,14 +57,15 @@
             {% endif %}
           </a>
         </td>
-        <td class="px-4 py-3 text-right mp-mono font-semibold" style="color: var(--mp-felt-bright);">{{ "%.1f"|format(r.win_rate * 100) }}%</td>
+        <td class="px-4 py-3 text-right mp-mono font-semibold" style="color: var(--mp-brass-bright);">{{ r.elo }}</td>
+        <td class="px-4 py-3 text-right mp-mono" style="color: var(--mp-felt-bright);">{{ "%.1f"|format(r.win_rate * 100) }}%</td>
         <td class="px-4 py-3 text-right mp-mono" style="color: var(--mp-felt-bright);">{{ r.wins }}</td>
         <td class="px-4 py-3 text-right mp-mono" style="color: #E79E9B;">{{ r.losses }}</td>
         <td class="px-4 py-3 text-right mp-mono text-[var(--mp-ink-faint)]">{{ r.draws }}</td>
         <td class="px-4 py-3 text-right mp-mono text-[var(--mp-ink-muted)]">{{ r.total_matches }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="px-4 py-14 text-center">
+      <tr><td colspan="8" class="px-4 py-14 text-center">
         <div class="mp-display italic text-[var(--mp-ink-faint)] text-lg">No members have posted a full card yet.</div>
         <div class="text-[12px] text-[var(--mp-ink-faint)] mt-1">Five matches within the window qualifies you.</div>
       </td></tr>

@@ -59,6 +59,7 @@ class PlayerLeaderboardRow:
     player_id: str
     username: str
     display_name: str
+    elo: int         # Patch Pass 2 Item 2: player Elo is the primary ranking axis
     total_matches: int
     wins: int        # player wins
     losses: int      # player losses (incl. own abandoned matches = char wins)
@@ -231,6 +232,7 @@ def player_leaderboard(
             Player.id,
             Player.username,
             Player.display_name,
+            Player.elo,
             total.label("total"),
             player_wins.label("wins"),
             player_losses.label("losses"),
@@ -243,13 +245,14 @@ def player_leaderboard(
             *visible_character_filter(viewer),
             Player.username != "legacy_system",  # never include the system fallback
         )
-        .group_by(Player.id, Player.username, Player.display_name)
+        .group_by(Player.id, Player.username, Player.display_name, Player.elo)
         .having(total >= MIN_MATCHES_FOR_LEADERBOARD)
     )
     rows = session.execute(stmt).all()
+    # Patch Pass 2 Item 2: sort by Elo first, then total_matches as a tiebreaker.
     ranked = sorted(
         rows,
-        key=lambda r: ((r.wins or 0) / (r.total or 1), r.total or 0),
+        key=lambda r: (int(r.elo or 0), r.total or 0),
         reverse=True,
     )
     out: list[PlayerLeaderboardRow] = []
@@ -265,6 +268,7 @@ def player_leaderboard(
                 player_id=r.id,
                 username=r.username,
                 display_name=r.display_name,
+                elo=int(r.elo or 1200),
                 total_matches=total_i,
                 wins=wins_i,
                 losses=losses_i,

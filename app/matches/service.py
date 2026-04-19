@@ -176,6 +176,7 @@ def create_match(
         current_fen=START_FEN,
         move_count=0,
         character_elo_at_start=character.current_elo,
+        player_elo_at_start=player.elo,
     )
     session.add(match)
     session.flush()

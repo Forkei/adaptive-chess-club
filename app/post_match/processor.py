@@ -41,7 +41,7 @@ from app.models.match import (
 )
 from app.models.memory import Memory
 from app.post_match.analysis import analyze_match_moves, identify_critical_moments
-from app.post_match.elo_apply import apply_to_character, compute_elo_delta
+from app.post_match.elo_apply import apply_to_both
 from app.post_match.features import extract_features, merge_features
 from app.post_match.memory_gen import generate_match_memories, update_narrative_summary
 
@@ -314,16 +314,15 @@ def _run_pipeline(
     try:
         with session_scope() as session:
             match = session.get(Match, match_id)
-            computation = compute_elo_delta(
-                match=match, analysis_moves=engine_result.get("moves") or []
-            )
-            ratchet_result = apply_to_character(
-                session, match=match, elo_delta_raw=computation.elo_delta_raw
+            computation, both = apply_to_both(
+                session, match=match, analysis_moves=engine_result.get("moves") or []
             )
             a = _get_analysis(session, match_id)
             a.elo_delta_raw = computation.elo_delta_raw
-            a.elo_delta_applied = ratchet_result.current_elo_change
-            a.floor_raised = ratchet_result.floor_elo_raised
+            a.elo_delta_applied = both.character.current_elo_change
+            a.floor_raised = both.character.floor_elo_raised
+            a.player_elo_delta_applied = both.player.current_elo_change
+            a.player_floor_raised = both.player.floor_elo_raised
             _mark_step(session, a, STEP_ELO_RATCHET)
         _finish(STEP_ELO_RATCHET)
     except Exception as exc:

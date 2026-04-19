@@ -52,6 +52,7 @@ class PlayerLeaderboardEntry(BaseModel):
     player_id: str
     username: str
     display_name: str
+    elo: int = 1200  # Patch Pass 2 Item 2: primary ranking axis
     total_matches: int
     wins: int
     losses: int

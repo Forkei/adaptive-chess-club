@@ -157,8 +157,12 @@ def test_processor_end_to_end_happy_path():
             "narrative_summary",
         }
         assert analysis.elo_delta_applied is not None
-        # Character won by 3 half-moves → outcome_delta=200, halved to 100, gain=10.
-        assert analysis.elo_delta_applied == 10
+        # Patch Pass 2 Item 2 math: char 1500 vs player 1200 default.
+        # expected ≈ 0.849, actual=1.0, K=32 → outcome ≈ 4.83
+        # move_count=3 < 10 → short-match scale ×0.3 → ≈ 1.45 → rounded 1.
+        assert analysis.elo_delta_applied == 1
+        # Player-side ratchet applied: player lost → small Elo loss.
+        assert analysis.player_elo_delta_applied == -1
         # At least one memory generated.
         assert len(analysis.generated_memory_ids) == 1
 
@@ -166,7 +170,9 @@ def test_processor_end_to_end_happy_path():
     with SessionLocal() as s:
         match = s.get(Match, match_id)
         char = s.get(Character, match.character_id)
-        assert char.current_elo == 1510
+        assert char.current_elo == 1501
+        player = s.get(Player, match.player_id)
+        assert player.elo == 1199  # lost 1 Elo
 
         profile = s.execute(
             __import__("sqlalchemy").select(OpponentProfile)
@@ -253,12 +259,14 @@ def test_processor_rage_quit_outcome_only():
         analysis = s.execute(
             __import__("sqlalchemy").select(MatchAnalysis).where(MatchAnalysis.match_id == match_id)
         ).scalar_one()
-        # Rage quits: outcome-only, not halved → +200 → +20 applied.
-        assert analysis.elo_delta_raw == 200.0
-        assert analysis.elo_delta_applied == 20
+        # Patch Pass 2 Item 2: rage quit uses expected-score math but skips
+        # move quality AND the short-match scale. char 1500 vs player 1200,
+        # expected ≈ 0.849, actual=1.0, K=32 → raw ≈ 4.83, applied 5.
+        assert analysis.elo_delta_raw > 4.5 and analysis.elo_delta_raw < 5.5
+        assert analysis.elo_delta_applied == 5
 
         char = s.get(Character, match.character_id)
-        assert char.current_elo == 1520
+        assert char.current_elo == 1505
 
 
 def test_resigned_is_not_rage_quit():

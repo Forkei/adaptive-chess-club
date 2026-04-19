@@ -64,25 +64,67 @@
             {% if floor_raised %}<span class="text-[var(--mp-ink-faint)]">· floor +25</span>{% endif %}
           </div>
         {% endif %}
+
+        {% if player_elo_before is not none %}
+          <div class="mp-eyebrow mt-5 mb-2">Your Elo</div>
+          <div class="mp-display text-[28px] leading-none">
+            <span class="text-[var(--mp-ink-faint)]">{{ player_elo_before }}</span>
+            <span class="mx-2 text-[var(--mp-ink-ghost)]">→</span>
+            <span class="{% if player_elo_delta_applied and player_elo_delta_applied > 0 %}text-[var(--mp-felt-bright)]
+                         {% elif player_elo_delta_applied and player_elo_delta_applied < 0 %}text-[#E79E9B]
+                         {% else %}text-[var(--mp-ink)]{% endif %}">
+              {{ player_elo_after }}
+            </span>
+          </div>
+          {% if player_elo_delta_applied is not none %}
+            <div class="text-[11px] mt-2 mp-mono uppercase tracking-[0.12em]
+                         {% if player_elo_delta_applied > 0 %}text-[var(--mp-felt-bright)]
+                         {% elif player_elo_delta_applied < 0 %}text-[#E79E9B]
+                         {% else %}text-[var(--mp-ink-faint)]{% endif %}">
+              {{ "+" if player_elo_delta_applied > 0 else "" }}{{ player_elo_delta_applied }}
+              {% if player_floor_raised %}<span class="text-[var(--mp-ink-faint)]">· floor +25</span>{% endif %}
+            </div>
+          {% endif %}
+        {% endif %}
       </div>
     </div>
 
     {% if elo_breakdown %}
       <div class="mt-6 pt-5 border-t border-[var(--mp-hairline)]">
         <div class="mp-eyebrow mb-3">How the delta was computed</div>
-        <div class="mp-mono text-[12px] text-[var(--mp-ink-muted)] space-y-1.5">
-          <div>Outcome <span class="text-[var(--mp-ink)]">{{ "+" if elo_breakdown.outcome > 0 else "" }}{{ elo_breakdown.outcome }}</span>
-            <span class="text-[var(--mp-ink-faint)]">
-              {% if elo_breakdown.outcome > 0 %}(win){% elif elo_breakdown.outcome < 0 %}(loss){% else %}(draw){% endif %}
-            </span>
+        <div class="grid grid-cols-2 gap-6">
+          <div>
+            <div class="mp-eyebrow mb-2 text-[10px]">{{ character.name }}</div>
+            <div class="mp-mono text-[12px] text-[var(--mp-ink-muted)] space-y-1.5">
+              <div>Expected score <span class="text-[var(--mp-ink)]">{{ elo_breakdown.expected }}</span>
+                <span class="text-[var(--mp-ink-faint)]">(vs player {{ match.player_elo_at_start or '—' }})</span>
+              </div>
+              <div>Actual score <span class="text-[var(--mp-ink)]">{{ elo_breakdown.actual }}</span></div>
+              <div>K-factor <span class="text-[var(--mp-ink)]">{{ elo_breakdown.k }}</span></div>
+              <div>Outcome part <span class="text-[var(--mp-ink)]">{{ "+" if elo_breakdown.outcome > 0 else "" }}{{ elo_breakdown.outcome }}</span></div>
+              <div>Move quality <span class="text-[var(--mp-ink)]">{{ "+" if elo_breakdown.move_quality > 0 else "" }}{{ elo_breakdown.move_quality }}</span>
+                <span class="text-[var(--mp-ink-faint)]">(±10 cap)</span>
+              </div>
+              {% if elo_breakdown.short_halved %}<div class="italic text-[var(--mp-ink-faint)]">Short match ({{ match.move_count }} &lt; 10 plies): scaled</div>{% endif %}
+              {% if elo_breakdown.rage_quit %}<div class="italic text-[var(--mp-ink-faint)]">Rage-quit: move quality skipped</div>{% endif %}
+              <div>Raw <span class="text-[var(--mp-ink)]">{{ "+" if elo_breakdown.raw > 0 else "" }}{{ elo_breakdown.raw }}</span></div>
+              <div>Clamped ±30 ⇒ <span class="text-[var(--mp-brass-bright)] font-semibold">{{ "+" if elo_delta_applied > 0 else "" }}{{ elo_delta_applied }}</span></div>
+            </div>
           </div>
-          <div>Move quality <span class="text-[var(--mp-ink)]">{{ "+" if elo_breakdown.move_quality > 0 else "" }}{{ elo_breakdown.move_quality }}</span>
-            <span class="text-[var(--mp-ink-faint)]">(eval loss, both sides)</span>
+          <div>
+            <div class="mp-eyebrow mb-2 text-[10px]">You</div>
+            <div class="mp-mono text-[12px] text-[var(--mp-ink-muted)] space-y-1.5">
+              <div>Expected score <span class="text-[var(--mp-ink)]">{{ elo_breakdown.player_expected }}</span>
+                <span class="text-[var(--mp-ink-faint)]">(vs char {{ match.character_elo_at_start }})</span>
+              </div>
+              <div>Actual score <span class="text-[var(--mp-ink)]">{{ elo_breakdown.player_actual }}</span></div>
+              <div>K-factor <span class="text-[var(--mp-ink)]">{{ elo_breakdown.player_k }}</span></div>
+              <div>Raw <span class="text-[var(--mp-ink)]">{{ "+" if elo_breakdown.player_raw > 0 else "" }}{{ elo_breakdown.player_raw }}</span></div>
+              {% if player_elo_delta_applied is not none %}
+                <div>Clamped ±30 ⇒ <span class="text-[var(--mp-brass-bright)] font-semibold">{{ "+" if player_elo_delta_applied > 0 else "" }}{{ player_elo_delta_applied }}</span></div>
+              {% endif %}
+            </div>
           </div>
-          {% if elo_breakdown.short_halved %}<div class="italic text-[var(--mp-ink-faint)]">Short match ({{ match.move_count }} &lt; 10 moves): halved</div>{% endif %}
-          {% if elo_breakdown.rage_quit %}<div class="italic text-[var(--mp-ink-faint)]">Rage-quit: move quality skipped</div>{% endif %}
-          <div>Raw <span class="text-[var(--mp-ink)]">{{ "+" if elo_breakdown.raw > 0 else "" }}{{ elo_breakdown.raw }}</span></div>
-          <div>× 0.1 gain, clamped ±30 ⇒ <span class="text-[var(--mp-brass-bright)] font-semibold">{{ "+" if elo_delta_applied > 0 else "" }}{{ elo_delta_applied }}</span></div>
         </div>
       </div>
     {% endif %}

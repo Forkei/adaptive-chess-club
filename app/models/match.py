@@ -72,6 +72,18 @@ class Player(Base):
         String(USERNAME_MAX_LEN), nullable=False, unique=True, index=True
     )
     display_name: Mapped[str] = mapped_column(String(80), nullable=False, default="Guest")
+
+    # Patch Pass 2 Item 2: player Elo. `elo` floats, `elo_floor` ratchets up
+    # over time (mirrors Character's floor semantics but no "adaptive" toggle),
+    # `elo_ceiling` is the hard cap. Default 1200 is rough "casual beginner".
+    elo: Mapped[int] = mapped_column(Integer, nullable=False, default=1200, server_default="1200")
+    elo_floor: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=800, server_default="800"
+    )
+    elo_ceiling: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2800, server_default="2800"
+    )
+
     max_content_rating: Mapped[ContentRating] = mapped_column(
         Enum(
             ContentRating,
@@ -122,6 +134,11 @@ class Match(Base):
 
     character_elo_at_start: Mapped[int] = mapped_column(Integer, nullable=False)
     character_elo_at_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Patch Pass 2 Item 2: player Elo snapshot at start + end of this match.
+    # Nullable because pre-Item-2 matches don't have these values.
+    player_elo_at_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    player_elo_at_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     extra_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
@@ -256,6 +273,11 @@ class MatchAnalysis(Base):
     elo_delta_raw: Mapped[float | None] = mapped_column(Float, nullable=True)
     elo_delta_applied: Mapped[int | None] = mapped_column(Integer, nullable=True)
     floor_raised: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Patch Pass 2 Item 2: player-side outputs of the (now-Elo-expected) ratchet.
+    player_elo_delta_applied: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    player_floor_raised: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     generated_memory_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
