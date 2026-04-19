@@ -148,7 +148,9 @@ async def run_live_match(
         char_name = char.name
         elo_before = char.current_elo
 
-        player = Player(display_name="LiveDemo")
+        from app.auth import generate_guest_username
+
+        player = Player(username=generate_guest_username(), display_name="LiveDemo")
         s.add(player)
         s.commit()
         player_id = player.id
