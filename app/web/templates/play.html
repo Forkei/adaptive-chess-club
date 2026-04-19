@@ -13,8 +13,10 @@
   .memory-ribbon { transition: opacity 0.8s ease-in-out; }
   .memory-ribbon.fading { opacity: 0.35; }
   .memory-detail { display: none; }
-  .memory-item:hover .memory-detail { display: block; }
+  /* Click-only expansion — no :hover rule, so touch devices don't latch open
+     and the 'collapsed glimpse, one-at-a-time' intent holds. */
   .memory-item.expanded .memory-detail { display: block; }
+  .memory-item { cursor: pointer; }
   .highlight-last { box-shadow: inset 0 0 0 3px var(--mp-brass-bright); }
 
   /* Disconnect overlay — fixed, covers everything, brass-bordered modal. */
