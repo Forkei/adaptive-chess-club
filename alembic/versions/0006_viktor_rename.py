@@ -32,13 +32,34 @@ def _has_table(name: str) -> bool:
 def upgrade() -> None:
     if not _has_table("characters"):
         return
-    op.execute(
-        sa.text(
-            "UPDATE characters "
-            "SET preset_key = 'viktor_petrov', name = 'Viktor Petrov' "
-            "WHERE preset_key = 'viktor_volkov'"
+
+    # Edge case that bit us in dev: the app's seed_presets ran between
+    # Phase 4 ship and this migration, so both `viktor_volkov` (pre-rename)
+    # and `viktor_petrov` (post-rename seed) rows exist. The UPDATE below
+    # would then violate the UNIQUE constraint on preset_key.
+    # Drop the orphan volkov row so the rename is a no-op in that case.
+    bind = op.get_bind()
+    has_volkov = bind.execute(
+        sa.text("SELECT 1 FROM characters WHERE preset_key = 'viktor_volkov' LIMIT 1")
+    ).first() is not None
+    has_petrov = bind.execute(
+        sa.text("SELECT 1 FROM characters WHERE preset_key = 'viktor_petrov' LIMIT 1")
+    ).first() is not None
+
+    if has_volkov and has_petrov:
+        op.execute(
+            sa.text(
+                "DELETE FROM characters WHERE preset_key = 'viktor_volkov'"
+            )
         )
-    )
+    else:
+        op.execute(
+            sa.text(
+                "UPDATE characters "
+                "SET preset_key = 'viktor_petrov', name = 'Viktor Petrov' "
+                "WHERE preset_key = 'viktor_volkov'"
+            )
+        )
 
 
 def downgrade() -> None:
