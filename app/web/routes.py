@@ -22,16 +22,36 @@ from sqlalchemy.orm import Session
 from app.auth import (
     COOKIE_MAX_AGE,
     PLAYER_COOKIE,
+    EmailError,
+    PasswordError,
     UsernameError,
+    consume_password_reset_token,
+    find_player_by_email,
+    find_player_by_identifier,
     find_player_by_username,
     generate_guest_username,
     get_optional_player,
+    hash_password,
     is_guest_username,
+    issue_password_reset_token,
+    needs_rehash,
+    normalize_email,
     normalize_username,
     require_player,
+    validate_email_address,
+    validate_password,
     validate_username,
+    verify_password,
+)
+from app.mail import Email, send as send_email
+from app.characters.chat_service import (
+    close_session as chat_close_session,
+    get_or_create_session as chat_get_or_create_session,
+    get_turns as chat_get_turns,
+    handle_player_message as chat_handle_player_message,
 )
 from app.characters.openings import OPENINGS
+from app.characters.rooms import theme_for_character
 from app.characters.style import style_to_prompt_fragments
 from app.db import get_session
 from app.discovery import (
@@ -255,14 +275,37 @@ def discovery(
 # ------------------------------ Auth ------------------------------
 
 
+def _safe_next(raw: str) -> str:
+    """Prevent open-redirects. Only accept in-app paths."""
+    if not raw:
+        return "/"
+    if raw.startswith("/") and not raw.startswith("//"):
+        return raw
+    return "/"
+
+
+def _set_login_cookie(response: RedirectResponse, player_id: str) -> None:
+    response.set_cookie(
+        key=PLAYER_COOKIE,
+        value=player_id,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+    )
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_form(
     request: Request,
     next: str = "/",
     error: str | None = None,
     flash: str | None = None,
+    identifier: str = "",
     player: Player | None = Depends(get_optional_player),
 ) -> HTMLResponse:
+    prefill_identifier = identifier
+    if not prefill_identifier and player is not None and is_guest_username(player.username):
+        prefill_identifier = ""
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -271,7 +314,7 @@ def login_form(
             "next": next,
             "error": error,
             "flash": flash,
-            "prefill": player.username if (player and is_guest_username(player.username)) else "",
+            "prefill_identifier": prefill_identifier,
         },
     )
 
@@ -280,61 +323,267 @@ def login_form(
 def login_submit(
     request: Request,
     response: Response,
-    username: str = Form(...),
+    identifier: str = Form(...),
+    password: str = Form(""),
     next: str = Form("/"),
     player: Player | None = Depends(get_optional_player),
     session: Session = Depends(get_session),
 ):
-    normalized = normalize_username(username)
-    try:
-        validate_username(normalized)
-    except UsernameError as exc:
+    """Accept username OR email + password.
+
+    Legacy (pre-4.0a) accounts and `guest_*` rows may have
+    `password_hash=NULL`. For those, login proceeds with just the
+    identifier (so existing dev accounts keep working); the UI nudges
+    them to set a password via /settings.
+    """
+    identifier_raw = (identifier or "").strip()
+    if not identifier_raw:
         return RedirectResponse(
-            url=f"/login?next={next}&error={exc.code}",
+            url=f"/login?next={next}&error=identifier_required",
             status_code=303,
         )
 
-    existing = find_player_by_username(session, normalized)
-    flash_key: str
-    final_player: Player
+    existing = find_player_by_identifier(session, identifier_raw)
+    if existing is None:
+        # Don't distinguish "unknown user" from "wrong password" — same code.
+        return RedirectResponse(
+            url=f"/login?next={next}&error=bad_credentials&identifier={identifier_raw}",
+            status_code=303,
+        )
 
-    if player is not None and is_guest_username(player.username) and existing is None:
-        # Rename the guest account — preserves matches, memories, stats.
-        player.username = normalized
+    if existing.password_hash:
+        if not password or not verify_password(password, existing.password_hash):
+            return RedirectResponse(
+                url=f"/login?next={next}&error=bad_credentials&identifier={identifier_raw}",
+                status_code=303,
+            )
+        # Upgrade hash params if argon2 defaults changed since signup.
+        if needs_rehash(existing.password_hash):
+            existing.password_hash = hash_password(password)
+            session.commit()
+    else:
+        # Legacy / guest row — no password on file. Accept identifier-only.
+        # Hint the user to set one.
+        if password:
+            # They provided a password, but the account has none. Don't reject
+            # — treat it as a no-op and log them in; settings page nudges them.
+            pass
+
+    safe_next = _safe_next(next)
+    separator = "&" if "?" in safe_next else "?"
+    flash_key = "needs_password" if not existing.password_hash else "welcome_back"
+    target = f"{safe_next}{separator}flash={flash_key}&u={existing.username}"
+    redir = RedirectResponse(url=target, status_code=303)
+    _set_login_cookie(redir, existing.id)
+    return redir
+
+
+@router.get("/signup", response_class=HTMLResponse)
+def signup_form(
+    request: Request,
+    next: str = "/",
+    error: str | None = None,
+    flash: str | None = None,
+    player: Player | None = Depends(get_optional_player),
+) -> HTMLResponse:
+    # If a guest is logged in, pre-fill any currently-useful fields. We don't
+    # prefill email because guests don't have one.
+    return templates.TemplateResponse(
+        request,
+        "signup.html",
+        {
+            "player": player,
+            "next": next,
+            "error": error,
+            "flash": flash,
+            "upgrade_guest": player is not None and is_guest_username(player.username),
+        },
+    )
+
+
+@router.post("/signup")
+def signup_submit(
+    request: Request,
+    username: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    password_confirm: str = Form(...),
+    next: str = Form("/"),
+    player: Player | None = Depends(get_optional_player),
+    session: Session = Depends(get_session),
+):
+    username_n = normalize_username(username)
+    email_raw = normalize_email(email)
+
+    try:
+        validate_username(username_n)
+    except UsernameError as exc:
+        return RedirectResponse(
+            url=f"/signup?next={next}&error={exc.code}",
+            status_code=303,
+        )
+    try:
+        email_n = validate_email_address(email_raw)
+    except EmailError as exc:
+        return RedirectResponse(
+            url=f"/signup?next={next}&error=email_{exc.code}",
+            status_code=303,
+        )
+    try:
+        validate_password(password)
+    except PasswordError as exc:
+        return RedirectResponse(
+            url=f"/signup?next={next}&error=password_{exc.code}",
+            status_code=303,
+        )
+    if password != password_confirm:
+        return RedirectResponse(
+            url=f"/signup?next={next}&error=password_mismatch",
+            status_code=303,
+        )
+
+    # Uniqueness checks. Allow the current guest to keep their chosen
+    # username when upgrading in-place.
+    username_clash = find_player_by_username(session, username_n)
+    if username_clash is not None and not (
+        player is not None
+        and player.id == username_clash.id
+        and is_guest_username(player.username)
+    ):
+        return RedirectResponse(
+            url=f"/signup?next={next}&error=username_taken",
+            status_code=303,
+        )
+    email_clash = find_player_by_email(session, email_n)
+    if email_clash is not None and not (
+        player is not None and player.id == email_clash.id
+    ):
+        return RedirectResponse(
+            url=f"/signup?next={next}&error=email_taken",
+            status_code=303,
+        )
+
+    pwd_hash = hash_password(password)
+    if player is not None and is_guest_username(player.username):
+        # Upgrade the guest row in place — preserves matches, memories, Elo.
+        player.username = username_n
+        player.email = email_n
+        player.password_hash = pwd_hash
+        if player.display_name in ("Guest", "", None):
+            player.display_name = username_n
         session.commit()
         session.refresh(player)
-        flash_key = "renamed"
         final_player = player
-    elif existing is not None:
-        if player is not None and player.id == existing.id:
-            flash_key = "welcome_back"
-        else:
-            flash_key = "welcome_back"
-        final_player = existing
+        flash_key = "upgraded"
     else:
-        # Brand-new username. Create the account.
         final_player = Player(
-            username=normalized,
-            display_name=normalized,
+            username=username_n,
+            display_name=username_n,
+            email=email_n,
+            password_hash=pwd_hash,
         )
         session.add(final_player)
         session.commit()
         session.refresh(final_player)
         flash_key = "welcome"
 
-    # Build redirect that sets the cookie.
-    safe_next = next if next.startswith("/") and not next.startswith("//") else "/"
-    # Append flash via query to the destination.
+    safe_next = _safe_next(next)
     separator = "&" if "?" in safe_next else "?"
     target = f"{safe_next}{separator}flash={flash_key}&u={final_player.username}"
     redir = RedirectResponse(url=target, status_code=303)
-    redir.set_cookie(
-        key=PLAYER_COOKIE,
-        value=final_player.id,
-        max_age=COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="lax",
+    _set_login_cookie(redir, final_player.id)
+    return redir
+
+
+@router.get("/forgot-password", response_class=HTMLResponse)
+def forgot_password_form(
+    request: Request,
+    error: str | None = None,
+    flash: str | None = None,
+    player: Player | None = Depends(get_optional_player),
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "forgot_password.html",
+        {"player": player, "error": error, "flash": flash},
     )
+
+
+@router.post("/forgot-password")
+def forgot_password_submit(
+    request: Request,
+    email: str = Form(...),
+    session: Session = Depends(get_session),
+):
+    email_raw = normalize_email(email)
+    # Try to validate but don't leak: any invalid input still shows the
+    # generic success flash so attackers can't enumerate accounts.
+    target = find_player_by_email(session, email_raw) if email_raw else None
+    if target is not None:
+        raw_token = issue_password_reset_token(session, target)
+        session.commit()
+        from app.config import get_settings as _gs
+
+        reset_url = str(request.url_for("reset_password_form", token=raw_token))
+        ttl = _gs().password_reset_token_ttl_minutes
+        send_email(
+            Email(
+                to=target.email or email_raw,
+                subject="Reset your Metropolis Chess Club password",
+                body=(
+                    f"Hello {target.username},\n\n"
+                    f"To set a new password, visit:\n{reset_url}\n\n"
+                    f"The link expires in {ttl} minutes.\n\n"
+                    "If you didn't request this, you can ignore this message."
+                ),
+            )
+        )
+    return RedirectResponse(url="/forgot-password?flash=sent", status_code=303)
+
+
+@router.get("/reset-password/{token}", response_class=HTMLResponse, name="reset_password_form")
+def reset_password_form(
+    request: Request,
+    token: str,
+    error: str | None = None,
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "reset_password.html",
+        {"token": token, "error": error},
+    )
+
+
+@router.post("/reset-password/{token}")
+def reset_password_submit(
+    token: str,
+    password: str = Form(...),
+    password_confirm: str = Form(...),
+    session: Session = Depends(get_session),
+):
+    try:
+        validate_password(password)
+    except PasswordError as exc:
+        return RedirectResponse(
+            url=f"/reset-password/{token}?error=password_{exc.code}",
+            status_code=303,
+        )
+    if password != password_confirm:
+        return RedirectResponse(
+            url=f"/reset-password/{token}?error=password_mismatch",
+            status_code=303,
+        )
+
+    player = consume_password_reset_token(session, token)
+    if player is None:
+        session.commit()  # persist any used_at markers
+        return RedirectResponse(url="/login?error=reset_token_invalid", status_code=303)
+
+    player.password_hash = hash_password(password)
+    session.commit()
+
+    redir = RedirectResponse(url="/?flash=password_reset", status_code=303)
+    _set_login_cookie(redir, player.id)
     return redir
 
 
@@ -355,7 +604,13 @@ def settings_page(
     return templates.TemplateResponse(
         request,
         "settings.html",
-        {"player": player, "flash": flash, "error": error},
+        {
+            "player": player,
+            "flash": flash,
+            "error": error,
+            "has_password": player.password_hash is not None,
+            "has_email": player.email is not None,
+        },
     )
 
 
@@ -379,6 +634,63 @@ def settings_submit(
     player.max_content_rating = rating
     session.commit()
     return RedirectResponse(url="/settings?flash=saved", status_code=303)
+
+
+@router.post("/settings/password")
+def settings_change_password(
+    current_password: str = Form(""),
+    new_password: str = Form(...),
+    new_password_confirm: str = Form(...),
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+):
+    """Set-or-change the caller's password.
+
+    - If `player.password_hash` is NULL (legacy / guest), `current_password`
+      is ignored and the new password is simply set.
+    - Otherwise `current_password` must verify against the stored hash.
+    """
+    if player.password_hash:
+        if not verify_password(current_password, player.password_hash):
+            return RedirectResponse(
+                url="/settings?error=wrong_current_password", status_code=303
+            )
+    try:
+        validate_password(new_password)
+    except PasswordError as exc:
+        return RedirectResponse(
+            url=f"/settings?error=password_{exc.code}", status_code=303
+        )
+    if new_password != new_password_confirm:
+        return RedirectResponse(
+            url="/settings?error=password_mismatch", status_code=303
+        )
+    player.password_hash = hash_password(new_password)
+    session.commit()
+    return RedirectResponse(url="/settings?flash=password_saved", status_code=303)
+
+
+@router.post("/settings/email")
+def settings_change_email(
+    new_email: str = Form(...),
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+):
+    raw = normalize_email(new_email)
+    try:
+        addr = validate_email_address(raw)
+    except EmailError as exc:
+        return RedirectResponse(
+            url=f"/settings?error=email_{exc.code}", status_code=303
+        )
+    clash = find_player_by_email(session, addr)
+    if clash is not None and clash.id != player.id:
+        return RedirectResponse(url="/settings?error=email_taken", status_code=303)
+    player.email = addr
+    # Email verification not implemented in 4.0a — treat as unverified.
+    player.email_verified_at = None
+    session.commit()
+    return RedirectResponse(url="/settings?flash=email_saved", status_code=303)
 
 
 # ------------------------------ Characters ------------------------------
@@ -537,8 +849,127 @@ def character_detail(
             "owner_username": owner_username,
             "is_owner": character.owner_id == player.id,
             "hall_of_fame": hof,
+            "room": theme_for_character(character),
         },
     )
+
+
+# ------------------------------ Pre-match chat (Phase 4.2.5) ------------------------------
+
+
+@router.get("/characters/{character_id}/chat/history")
+def character_chat_history(
+    character_id: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+):
+    """Return every turn of the current active session. Client calls this
+    on room entry so a page refresh doesn't blank the conversation.
+    """
+    character = session.get(Character, character_id)
+    if character is None or character.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Character not found")
+    # Enforce the same visibility/rating gate as the detail page.
+    if character.visibility == Visibility.PRIVATE and character.owner_id != player.id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if not rating_allowed(character.content_rating, player.max_content_rating):
+        raise HTTPException(status_code=403, detail="Content rating exceeds your preference.")
+
+    chat_session = chat_get_or_create_session(session, character=character, player=player)
+    turns = chat_get_turns(session, chat_session)
+    return {
+        "session_id": chat_session.id,
+        "status": chat_session.status.value,
+        "handed_off_match_id": chat_session.handed_off_match_id,
+        "turns": [
+            {
+                "id": t.id,
+                "turn_number": t.turn_number,
+                "role": t.role.value,
+                "text": t.text,
+                "emotion": t.emotion,
+                "emotion_intensity": t.emotion_intensity,
+                "game_action": t.game_action,
+                "created_at": t.created_at.isoformat() + "Z",
+            }
+            for t in turns
+        ],
+    }
+
+
+@router.post("/characters/{character_id}/chat")
+def character_chat_post(
+    character_id: str,
+    text: str = Form(...),
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+):
+    character = session.get(Character, character_id)
+    if character is None or character.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if character.visibility == Visibility.PRIVATE and character.owner_id != player.id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if not rating_allowed(character.content_rating, player.max_content_rating):
+        raise HTTPException(status_code=403, detail="Content rating exceeds your preference.")
+    if character.state != CharacterState.READY:
+        raise HTTPException(status_code=409, detail="Character is still preparing its memories.")
+
+    chat_session = chat_get_or_create_session(session, character=character, player=player)
+
+    try:
+        result = chat_handle_player_message(
+            session,
+            chat_session=chat_session,
+            character=character,
+            player=player,
+            text=text,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    ct = result.character_turn
+    return {
+        "player_turn": {
+            "id": result.player_turn.id,
+            "turn_number": result.player_turn.turn_number,
+            "text": result.player_turn.text,
+        },
+        "character_turn": {
+            "id": ct.id,
+            "turn_number": ct.turn_number,
+            "text": ct.text,
+            "emotion": ct.emotion,
+            "emotion_intensity": ct.emotion_intensity,
+            "game_action": ct.game_action,
+        },
+        "surfaced_memories": [
+            {
+                "memory_id": m.memory_id,
+                "narrative_text": m.narrative_text,
+                "retrieval_reason": m.retrieval_reason,
+                "from_cache": m.from_cache,
+            }
+            for m in result.surfaced_memories
+        ],
+        "handed_off_match_id": result.handed_off_match_id,
+        "redirect_url": (
+            f"/matches/{result.handed_off_match_id}" if result.handed_off_match_id else None
+        ),
+    }
+
+
+@router.post("/characters/{character_id}/chat/leave")
+def character_chat_leave(
+    character_id: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+):
+    character = session.get(Character, character_id)
+    if character is None:
+        return {"closed": False}
+    chat_session = chat_get_or_create_session(session, character=character, player=player)
+    chat_close_session(session, chat_session)
+    return {"closed": True}
 
 
 @router.get("/characters/{character_id}/edit", response_class=HTMLResponse)
@@ -781,6 +1212,7 @@ def match_page(
             "moves_json": moves,
             "engines_available": engines,
             "has_real_engine": bool(real_engines),
+            "room": theme_for_character(character),
         },
     )
 
@@ -827,6 +1259,7 @@ def match_watch_page(
             "character": character,
             "match_owner": match_owner,
             "moves_json": moves,
+            "room": theme_for_character(character),
         },
     )
 

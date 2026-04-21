@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 PRESET_KEYS = {
     "archibald": "archibald_finch",
-    "viktor": "viktor_volkov",
+    "viktor": "viktor_petrov",
     "margot": "margot_lindqvist",
     "kenji": "kenji_sato",
 }

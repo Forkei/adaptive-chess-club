@@ -150,7 +150,16 @@ def _load_or_init_mood(session: Session, match: Match) -> tuple[MoodState, MoodS
         character = session.get(Character, match.character_id)
         if character is None:
             raise MatchError(f"Character {match.character_id} missing")
-        initial = initial_mood_for_character(character)
+        # Phase 4.3 — pull tone drift from the character's evolution state
+        # (if any). Characters coming off a loss streak start the match
+        # with a slightly elevated tilt baseline; win streak raises
+        # confidence. `tone_bias_for(None)` is a zero-bias no-op, so the
+        # no-evolution-state case stays byte-identical to pre-4.3.
+        from app.models.evolution import CharacterEvolutionState
+        from app.post_match.evolution import tone_bias_for
+
+        state = session.get(CharacterEvolutionState, character.id)
+        initial = initial_mood_for_character(character, tone_bias=tone_bias_for(state))
         save_mood(match.id, initial, smoothed=True)
         save_mood(match.id, initial, smoothed=False)
         return initial, initial

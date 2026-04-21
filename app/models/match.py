@@ -73,6 +73,16 @@ class Player(Base):
     )
     display_name: Mapped[str] = mapped_column(String(80), nullable=False, default="Guest")
 
+    # Phase 4.0a: email + password. Nullable — rows created pre-4.0a (and
+    # auto-generated guest rows) have neither. A player with password_hash=NULL
+    # is in "legacy" mode and can still log in with just their username; the
+    # UI prompts them to set a password.
+    email: Mapped[str | None] = mapped_column(
+        String(254), nullable=True, unique=True, index=True
+    )
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Patch Pass 2 Item 2: player Elo. `elo` floats, `elo_floor` ratchets up
     # over time (mirrors Character's floor semantics but no "adaptive" toggle),
     # `elo_ceiling` is the hard cap. Default 1200 is rough "casual beginner".
@@ -139,6 +149,14 @@ class Match(Base):
     # Nullable because pre-Item-2 matches don't have these values.
     player_elo_at_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     player_elo_at_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Phase 4.0b: private-match flag. True for code-gated PvP lobbies; such
+    # matches skip the Elo ratchet and (eventually) the evolution pipeline,
+    # to prevent Elo farming with friends. Character-vs-player matches are
+    # always public by default. Default False → existing behavior preserved.
+    is_private: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     extra_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 

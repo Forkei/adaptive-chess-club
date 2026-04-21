@@ -6,10 +6,48 @@
 {% if is_generating %}
 <meta http-equiv="refresh" content="4" />
 {% endif %}
+<script src="/static/js/emotion_video.js" defer></script>
+<style>
+  /* Phase 4.2.5 — pre-match chat pane on the character detail page.
+     Reuses chat-bubble-* from base.html. */
+  .mp-emotion-stage-inline {
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: #0a0a0a;
+    border: 1px solid var(--mp-brass-dim);
+    box-shadow: 0 12px 30px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(201,166,107,0.10);
+  }
+  .mp-emotion-stage-inline::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,0) 65%, rgba(0,0,0,0.42) 100%);
+    pointer-events: none;
+  }
+  .mp-emotion-stage-inline video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+  .chat-pane {
+    background: var(--mp-surface-1);
+    border: 1px solid var(--mp-hairline);
+    border-radius: 2px;
+    padding: 14px;
+    height: 340px;
+    overflow-y: auto;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
 {% from "_partials/_macros.html" import rating_badge, visibility_badge, preset_badge, character_state_badge %}
+
+{% if room and room.slug != "default" %}
+<div class="mp-enter mp-enter-1 mb-7">
+  <div class="mp-eyebrow" style="color: var(--mp-brass);">You enter the room</div>
+  <div class="mp-display italic text-[17px] mt-1" style="color: var(--mp-ink-muted);">{{ room.tagline }}</div>
+  <div class="mp-brass-rule mt-4"></div>
+</div>
+{% endif %}
 
 <div class="flex items-start gap-6 mp-enter mp-enter-1">
   <div class="shrink-0 w-20 h-20 flex items-center justify-center border border-[var(--mp-brass-dim)] bg-[var(--mp-surface-2)] rounded-sm text-5xl leading-none">
@@ -48,11 +86,6 @@
     {% endif %}
   </div>
   <div class="flex flex-col gap-2 items-end shrink-0">
-    {% if not is_generating %}
-    <form method="post" action="/play/{{ character.id }}">
-      <button class="mp-btn mp-btn-brass" style="padding: 0.65rem 1.4rem; font-size: 14px;">▶ Play</button>
-    </form>
-    {% endif %}
     {% if is_owner and not character.is_preset %}
     <div class="flex gap-2">
       <a href="/characters/{{ character.id }}/edit" class="mp-btn mp-btn-ghost">Edit</a>
@@ -68,6 +101,152 @@
     {% endif %}
   </div>
 </div>
+
+{# Phase 4.2.5 — pre-match chat + emotion stage. The game starts when
+   the Soul decides (no button). Character's emotion videos layer above. #}
+{% if not is_generating and not is_failed %}
+<section class="mt-7 grid grid-cols-1 lg:grid-cols-[minmax(0,520px)_minmax(0,1fr)] gap-6 mp-enter mp-enter-2">
+  <div class="space-y-3">
+    {% if room and room.emotion_clips %}
+    <div id="mp-emotion-stage" class="mp-emotion-stage-inline" data-clips='{{ room.emotion_clips | tojson }}'>
+      <video id="mp-emotion-a" muted playsinline preload="auto" loop></video>
+      <video id="mp-emotion-b" muted playsinline preload="auto" loop></video>
+    </div>
+    {% endif %}
+    <div class="text-[11px] mp-mono uppercase tracking-[0.15em] text-[var(--mp-ink-faint)]">
+      <span id="emotion-indicator">—</span>
+      <span class="mx-1 text-[var(--mp-ink-ghost)]">·</span>
+      <span id="game-action-hint" class="hidden" style="color: var(--mp-brass-bright);"></span>
+    </div>
+  </div>
+
+  <div>
+    <div class="mp-eyebrow mb-2">Conversation</div>
+    <div id="chat-log" class="chat-pane text-sm space-y-2">
+      <div id="chat-placeholder" class="text-[12px] text-[var(--mp-ink-faint)] italic">
+        Say hello to {{ character.name }}. They'll decide when it's time to play.
+      </div>
+    </div>
+    <input id="chat-input" type="text" maxlength="2000" autocomplete="off"
+           placeholder="Say something to {{ character.name }}… (Enter)"
+           class="mp-input w-full mt-2" />
+  </div>
+</section>
+
+<script>
+  const CHAR_ID = {{ character.id | tojson }};
+  const CHAR_NAME = {{ character.name | tojson }};
+  const EMOTION_COLORS = {
+    neutral: "#B5AD96", pleased: "#6FC0A8", annoyed: "#E0B870",
+    excited: "#8FD2E0", focused: "#8DA4C3", uncertain: "#9A9785",
+    smug: "#C6A7D2", deflated: "#E79E9B",
+  };
+
+  const chatLog = document.getElementById('chat-log');
+  const chatInput = document.getElementById('chat-input');
+  const emotionInd = document.getElementById('emotion-indicator');
+  const gaHint = document.getElementById('game-action-hint');
+
+  function renderBubble(role, text, { pending } = {}) {
+    const placeholder = chatLog.querySelector('#chat-placeholder');
+    if (placeholder) placeholder.remove();
+    const div = document.createElement('div');
+    div.className = (role === 'character' ? 'chat-bubble-agent' : 'chat-bubble-player') + (pending ? ' in-transit' : '');
+    const label = role === 'character' ? CHAR_NAME : 'You';
+    div.innerHTML =
+      `<span class="text-xs uppercase tracking-wider text-neutral-500">${label}</span>` +
+      `<div class="text-sm mt-0.5"></div>`;
+    div.querySelector('div').textContent = text;
+    chatLog.appendChild(div);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    return div;
+  }
+
+  function setEmotion(emotion, intensity) {
+    if (!emotion) { emotionInd.textContent = "—"; emotionInd.style.color = 'var(--mp-ink-faint)'; return; }
+    const dots = intensity >= 0.7 ? "●●●" : intensity >= 0.4 ? "●●○" : "●○○";
+    emotionInd.textContent = `${emotion} ${dots}`;
+    emotionInd.style.color = EMOTION_COLORS[emotion] || 'var(--mp-ink-muted)';
+    if (window.MpEmotion && typeof window.MpEmotion.set === 'function') {
+      try { window.MpEmotion.set(emotion, intensity); } catch (_) {}
+    }
+  }
+
+  async function loadHistory() {
+    try {
+      const r = await fetch(`/characters/${CHAR_ID}/chat/history`);
+      if (!r.ok) return;
+      const data = await r.json();
+      for (const t of data.turns) {
+        renderBubble(t.role, t.text);
+        if (t.role === 'character') setEmotion(t.emotion, t.emotion_intensity || 0);
+      }
+      if (data.handed_off_match_id) {
+        window.location.href = `/matches/${data.handed_off_match_id}`;
+      }
+    } catch (_) {}
+  }
+
+  async function sendMessage(text) {
+    if (!text) return;
+    const pendingBubble = renderBubble('player', text, { pending: true });
+    chatInput.value = '';
+    chatInput.disabled = true;
+
+    try {
+      const body = new FormData();
+      body.append('text', text);
+      const r = await fetch(`/characters/${CHAR_ID}/chat`, { method: 'POST', body });
+      if (!r.ok) {
+        pendingBubble.classList.remove('in-transit');
+        pendingBubble.style.opacity = '0.5';
+        return;
+      }
+      const data = await r.json();
+      pendingBubble.classList.remove('in-transit');
+      renderBubble('character', data.character_turn.text);
+      setEmotion(data.character_turn.emotion, data.character_turn.emotion_intensity || 0);
+
+      if (data.character_turn.game_action === 'propose_game') {
+        gaHint.textContent = "they've suggested a game — reply to accept";
+        gaHint.classList.remove('hidden');
+      } else if (data.character_turn.game_action === 'start_game') {
+        gaHint.textContent = "setting up the board…";
+        gaHint.classList.remove('hidden');
+      } else {
+        gaHint.classList.add('hidden');
+      }
+
+      if (data.redirect_url) {
+        setTimeout(() => { window.location.href = data.redirect_url; }, 900);
+      }
+    } catch (_) {
+      pendingBubble.style.opacity = '0.5';
+    } finally {
+      chatInput.disabled = false;
+      chatInput.focus();
+    }
+  }
+
+  chatInput.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    const text = (chatInput.value || '').trim();
+    if (text) sendMessage(text);
+  });
+
+  // Signal leaving so the session is closed cleanly (best-effort; the Beacon
+  // API keeps the request alive even as the page unloads).
+  window.addEventListener('pagehide', () => {
+    try {
+      navigator.sendBeacon(`/characters/${CHAR_ID}/chat/leave`, new FormData());
+    } catch (_) {}
+  });
+
+  loadHistory();
+  chatInput.focus();
+</script>
+{% endif %}
 
 {% if is_failed and character.memory_generation_error %}
 <div class="mt-6 rounded border border-rose-900/80 bg-rose-950/40 p-4 text-sm text-rose-200">

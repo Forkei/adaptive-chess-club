@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="/static/js/emotion_video.js" defer></script>
 <style>
   /* Play-page-specific only — shared chat/conn/board styles live in base.html. */
   .memory-ribbon { transition: opacity 0.8s ease-in-out; }
@@ -40,6 +41,29 @@
     content: ''; position: absolute; inset: 4px;
     border: 1px solid rgba(201,166,107,0.18); pointer-events: none;
   }
+
+  /* Phase 4.1c — character portrait stage. Lives ABOVE the board so
+     the user reads it as "the opponent, across the table from me".
+     Letterbox (16:9), with a brass frame. Video elements are stacked
+     and crossfaded by /static/js/emotion_video.js. */
+  .mp-emotion-stage {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: #0a0a0a;
+    border: 1px solid var(--mp-brass-dim);
+    box-shadow: 0 12px 30px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(201,166,107,0.10);
+    margin-bottom: 14px;
+  }
+  .mp-emotion-stage::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,0) 65%, rgba(0,0,0,0.42) 100%);
+    pointer-events: none;
+  }
+  .mp-emotion-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 </style>
 {% endblock %}
 
@@ -87,6 +111,12 @@
 
 <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,500px)_minmax(0,1fr)] gap-6 mp-enter mp-enter-2">
   <div>
+    {% if room and room.emotion_clips %}
+    <div id="mp-emotion-stage" class="mp-emotion-stage" data-clips='{{ room.emotion_clips | tojson }}'>
+      <video id="mp-emotion-a" muted playsinline preload="auto" loop></video>
+      <video id="mp-emotion-b" muted playsinline preload="auto" loop></video>
+    </div>
+    {% endif %}
     <div class="mp-board-frame">
       <div id="board" class="w-full max-w-[480px]"></div>
     </div>
@@ -226,6 +256,10 @@
     const color = EMOTION_COLORS[emotion] || "text-neutral-300";
     const dots = intensity >= 0.7 ? "●●●" : intensity >= 0.4 ? "●●○" : "●○○";
     el.innerHTML = `<span class="${color}">${emotion}</span> <span class="text-neutral-600 text-[10px]">${dots}</span>`;
+    // Phase 4.1c — drive the portrait stage too, if the character has clips.
+    if (window.MpEmotion && typeof window.MpEmotion.set === 'function') {
+      try { window.MpEmotion.set(emotion, intensity); } catch (_) {}
+    }
   }
   function setConnPill(state) {
     const el = document.getElementById('conn-pill');

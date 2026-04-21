@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Rooms — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="mp-enter mp-enter-1 mb-8">
+  <div class="mp-eyebrow mb-2">Rooms</div>
+  <h1 class="mp-display text-[36px] leading-[1] tracking-tight">Open lobbies</h1>
+  <p class="text-[13px] text-[var(--mp-ink-muted)] mt-2 max-w-2xl">
+    Public rooms with open doors. Step in, take a seat, challenge the host.
+    Private rooms don't show here — you need the code.
+  </p>
+  <div class="mt-5 flex flex-wrap gap-3">
+    <a href="/lobby/new" class="mp-btn mp-btn-brass">+ Open a room</a>
+    <a href="/lobby/join" class="mp-btn mp-btn-ghost">Enter a code</a>
+    <a href="/matchmaking" class="mp-btn mp-btn-ghost">Auto-pair me</a>
+    {% if current_lobby %}
+    <a href="/lobby/{{ current_lobby.id }}" class="mp-btn mp-btn-ghost" style="color: var(--mp-brass);">
+      ← Back to your room
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+{% if not entries %}
+<div class="mp-panel rounded-sm p-8 text-center">
+  <div class="mp-display italic text-[19px] mb-1" style="color: var(--mp-ink-muted);">No open rooms right now.</div>
+  <div class="text-[13px] text-[var(--mp-ink-faint)]">Be the first to pull up a chair.</div>
+</div>
+{% else %}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mp-enter mp-enter-2">
+  {% for e in entries %}
+  <a href="/lobby/{{ e.lobby.id }}" class="mp-panel mp-panel-raised rounded-sm p-5 block hover:border-[var(--mp-brass-dim)] transition">
+    <div class="flex items-start justify-between">
+      <div>
+        <div class="mp-eyebrow" style="color: var(--mp-brass);">
+          Hosted by @{{ e.host_username }}
+        </div>
+        <div class="mp-display text-[22px] mt-1">Room {{ e.lobby.code }}</div>
+      </div>
+      <div class="text-right text-[11px] mp-mono uppercase tracking-[0.15em] text-[var(--mp-ink-faint)]">
+        <div>{{ e.member_count }} / 2 seated</div>
+        {% if e.lobby.allow_spectators %}<div style="color: var(--mp-ink-blue-alt);">spectators welcome</div>
+        {% else %}<div style="color: var(--mp-oxblood);">locked to spectators</div>{% endif %}
+      </div>
+    </div>
+    <div class="mt-4 flex items-center gap-3 text-[12px] text-[var(--mp-ink-muted)]">
+      {% if e.lobby.music_track %}♪ {{ e.lobby.music_track }}{% endif %}
+      <span style="color: var(--mp-ink-ghost);">·</span>
+      <span style="color: {{ e.lobby.lights_hue }};">● lights</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

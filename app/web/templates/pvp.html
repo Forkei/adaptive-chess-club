@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}@{{ white.username }} vs @{{ black.username }} — Metropolis Chess Club{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+<style>
+  .mp-board-frame {
+    padding: 10px;
+    background:
+      linear-gradient(180deg, rgba(201,166,107,0.08), rgba(201,166,107,0.02)),
+      var(--mp-surface-2);
+    border: 1px solid var(--mp-brass-dim);
+    position: relative;
+  }
+  .mp-board-frame::before {
+    content: ''; position: absolute; inset: 4px;
+    border: 1px solid rgba(201,166,107,0.18); pointer-events: none;
+  }
+  .white-1e1d7 { background-color: #EDE4CE !important; }
+  .black-3c85d { background-color: #2F4A42 !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div id="banner" class="hidden mb-4 rounded-sm border px-4 py-3 text-sm"
+     style="border-color: rgba(168,66,63,0.45); background: rgba(168,66,63,0.08); color: #E79E9B;"></div>
+
+<div class="flex items-start justify-between mb-5 mp-enter mp-enter-1">
+  <div>
+    <div class="mp-eyebrow">Match in Room {{ lobby.code }}</div>
+    <h1 class="mp-display text-[26px] leading-[1] tracking-tight mt-1">
+      <span style="color: var(--mp-ink);">@{{ white.username }}</span>
+      <span class="text-[var(--mp-ink-faint)] mx-2">vs</span>
+      <span style="color: var(--mp-ink);">@{{ black.username }}</span>
+    </h1>
+    {% if match.is_private %}
+    <div class="mt-2 text-[11px] mp-mono uppercase tracking-[0.15em]" style="color: var(--mp-brass-bright);">
+      private match — not rated
+    </div>
+    {% endif %}
+  </div>
+  <div class="text-right text-[12px] mp-mono text-[var(--mp-ink-faint)]">
+    <div>white: {{ match.white_elo_at_start }}</div>
+    <div>black: {{ match.black_elo_at_start }}</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-[minmax(0,500px)_minmax(0,1fr)] gap-6 mp-enter mp-enter-2">
+  <div>
+    <div class="mp-board-frame">
+      <div id="board" class="w-full max-w-[480px]"></div>
+    </div>
+    <div class="mt-4 flex items-center gap-3">
+      {% if not is_spectator %}
+      <button id="resign-btn" class="mp-btn mp-btn-danger">Resign</button>
+      {% endif %}
+      <div id="turn-indicator" class="text-[13px]" style="color: var(--mp-ink-muted);"></div>
+    </div>
+  </div>
+
+  <div class="flex flex-col gap-4">
+    <div>
+      <h2 class="mp-eyebrow mb-2">Moves</h2>
+      <ol id="move-list" class="mp-panel rounded-sm p-4 min-h-[220px] max-h-[360px] overflow-y-auto mp-mono text-[13px] text-[var(--mp-ink)]"></ol>
+    </div>
+    <div id="end-panel" class="hidden mp-panel rounded-sm p-5">
+      <div class="mp-display text-[22px]" id="end-headline"></div>
+      <div class="text-[12px] text-[var(--mp-ink-faint)] mt-2" id="end-detail"></div>
+      <a href="/lobby/{{ lobby.id }}" class="mt-4 mp-btn mp-btn-brass inline-block">Back to the room</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  const MATCH_ID = {{ match.id | tojson }};
+  const INITIAL_FEN = {{ match.current_fen | tojson }};
+  const INITIAL_MOVES = {{ match.moves | tojson }};
+  const IS_WHITE = {{ 'true' if is_white else 'false' }};
+  const IS_BLACK = {{ 'true' if is_black else 'false' }};
+  const IS_SPECTATOR = {{ 'true' if is_spectator else 'false' }};
+  const MY_COLOR = IS_WHITE ? 'white' : (IS_BLACK ? 'black' : null);
+
+  const game = new Chess(INITIAL_FEN);
+  let gameOver = {{ 'true' if match.status.value != 'in_progress' else 'false' }};
+
+  function showBanner(msg) {
+    const el = document.getElementById('banner');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 4000);
+  }
+
+  function setTurn() {
+    const el = document.getElementById('turn-indicator');
+    if (gameOver) { el.textContent = ''; return; }
+    const who = game.turn() === 'w' ? 'white' : 'black';
+    if (IS_SPECTATOR) { el.textContent = `${who} to move`; return; }
+    if (MY_COLOR === who) { el.textContent = 'your move'; el.style.color = 'var(--mp-brass-bright)'; }
+    else { el.textContent = `waiting for ${who}`; el.style.color = 'var(--mp-ink-muted)'; }
+  }
+
+  function renderMoves() {
+    const ol = document.getElementById('move-list');
+    ol.innerHTML = '';
+    const moves = INITIAL_MOVES.slice();
+    for (const m of moves) {
+      const li = document.createElement('li');
+      li.className = 'py-0.5';
+      li.textContent = `${m.move_number}. ${m.side === 'white' ? 'W' : 'B'} ${m.san}`;
+      ol.appendChild(li);
+    }
+    ol.scrollTop = ol.scrollHeight;
+  }
+  function appendMove(m) {
+    const ol = document.getElementById('move-list');
+    const li = document.createElement('li');
+    li.className = 'py-0.5';
+    li.textContent = `${m.move_number}. ${m.side === 'white' ? 'W' : 'B'} ${m.san}`;
+    ol.appendChild(li);
+    ol.scrollTop = ol.scrollHeight;
+  }
+
+  const board = Chessboard('board', {
+    draggable: !IS_SPECTATOR && !gameOver,
+    position: INITIAL_FEN,
+    orientation: IS_BLACK ? 'black' : 'white',
+    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+    onDragStart: (source, piece) => {
+      if (gameOver || IS_SPECTATOR) return false;
+      if (game.turn() === 'w' && (!IS_WHITE || !piece.startsWith('w'))) return false;
+      if (game.turn() === 'b' && (!IS_BLACK || !piece.startsWith('b'))) return false;
+    },
+    onDrop: async (source, target) => {
+      const move = game.move({ from: source, to: target, promotion: 'q' });
+      if (move === null) return 'snapback';
+      const uci = move.from + move.to + (move.promotion || '');
+      const res = await submitMove(uci);
+      if (!res) {
+        game.undo();
+        return 'snapback';
+      }
+    },
+    onSnapEnd: () => board.position(game.fen()),
+  });
+
+  async function submitMove(uci) {
+    const data = new FormData();
+    data.append('uci', uci);
+    const r = await fetch(`/pvp/${MATCH_ID}/move`, { method: 'POST', body: data });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showBanner(err.message || err.error || 'Move rejected');
+      return null;
+    }
+    const payload = await r.json();
+    INITIAL_MOVES.push(payload.move);
+    appendMove(payload.move);
+    if (payload.game_over) handleGameOver(payload);
+    setTurn();
+    return payload;
+  }
+
+  function handleGameOver(payload) {
+    gameOver = true;
+    document.getElementById('end-panel').classList.remove('hidden');
+    const head = document.getElementById('end-headline');
+    const detail = document.getElementById('end-detail');
+    let outcome = '';
+    if (payload.result === 'white_win') outcome = 'White wins';
+    else if (payload.result === 'black_win') outcome = 'Black wins';
+    else outcome = 'Draw';
+    head.textContent = outcome;
+    detail.textContent = payload.reason ? `(${payload.reason.replace(/_/g, ' ')})` : '';
+    document.getElementById('turn-indicator').textContent = '';
+  }
+
+  document.getElementById('resign-btn')?.addEventListener('click', async () => {
+    if (!confirm('Resign?')) return;
+    const r = await fetch(`/pvp/${MATCH_ID}/resign`, { method: 'POST' });
+    if (r.ok) {
+      const payload = await r.json();
+      handleGameOver({ result: payload.result, reason: 'resigned', game_over: true });
+    }
+  });
+
+  // Spectator + opponent poller — fetch FEN + moves periodically and apply
+  // anything new. 4.2g will replace this with a socket subscription.
+  let lastMoveCount = INITIAL_MOVES.length;
+  async function poll() {
+    if (gameOver) return;
+    try {
+      const r = await fetch(`/pvp/${MATCH_ID}/state`);
+      if (!r.ok) return;
+      const s = await r.json();
+      while (lastMoveCount < s.moves.length) {
+        const m = s.moves[lastMoveCount];
+        INITIAL_MOVES.push(m);
+        appendMove(m);
+        lastMoveCount++;
+      }
+      if (game.fen() !== s.current_fen) {
+        game.load(s.current_fen);
+        board.position(s.current_fen);
+      }
+      if (s.status !== 'in_progress') {
+        handleGameOver({ result: s.result, reason: s.reason, game_over: true });
+      }
+      setTurn();
+    } catch (_) {}
+  }
+  setInterval(poll, 1500);
+
+  renderMoves();
+  setTurn();
+</script>
+{% endblock %}

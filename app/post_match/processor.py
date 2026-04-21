@@ -42,6 +42,7 @@ from app.models.match import (
 from app.models.memory import Memory
 from app.post_match.analysis import analyze_match_moves, identify_critical_moments
 from app.post_match.elo_apply import apply_to_both
+from app.post_match.evolution import apply_evolution
 from app.post_match.features import extract_features, merge_features
 from app.post_match.memory_gen import generate_match_memories, update_narrative_summary
 
@@ -51,6 +52,9 @@ logger = logging.getLogger(__name__)
 STEP_ENGINE_ANALYSIS = "engine_analysis"
 STEP_FEATURES = "feature_extraction"
 STEP_ELO_RATCHET = "elo_ratchet"
+# Phase 4.3 — evolution runs AFTER Elo and BEFORE memory generation so
+# newly-detected traps can be referenced in the LLM memory narratives.
+STEP_EVOLUTION = "evolution"
 STEP_MEMORY_GEN = "memory_generation"
 STEP_NARRATIVE = "narrative_summary"
 
@@ -58,6 +62,7 @@ ALL_STEPS = [
     STEP_ENGINE_ANALYSIS,
     STEP_FEATURES,
     STEP_ELO_RATCHET,
+    STEP_EVOLUTION,
     STEP_MEMORY_GEN,
     STEP_NARRATIVE,
 ]
@@ -327,6 +332,25 @@ def _run_pipeline(
         _finish(STEP_ELO_RATCHET)
     except Exception as exc:
         logger.exception("elo_ratchet failed for match=%s: %s", match_id, exc)
+
+    # --- Step 3.5: Evolution (pure data, no LLM, private matches skipped) --
+    _start(STEP_EVOLUTION)
+    try:
+        with session_scope() as session:
+            match = session.get(Match, match_id)
+            analysis_row = _get_analysis(session, match_id)
+            opening_label = (analysis_row.features or {}).get("opening_label")
+            apply_evolution(
+                session,
+                match=match,
+                analysis_moves=engine_result.get("moves") or [],
+                critical_moments=list(analysis_row.critical_moments or []),
+                opening_label=opening_label,
+            )
+            _mark_step(session, analysis_row, STEP_EVOLUTION)
+        _finish(STEP_EVOLUTION)
+    except Exception as exc:
+        logger.exception("evolution failed for match=%s: %s", match_id, exc)
 
     # --- Steps 4 + 5: memory gen + narrative update (LLM) ------------------
     llm_client = llm

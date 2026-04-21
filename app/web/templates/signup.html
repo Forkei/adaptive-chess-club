@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Create an account — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-10 mp-enter mp-enter-1">
+  <div class="mp-eyebrow mb-2">{% if upgrade_guest %}Claim your guest{% else %}New member{% endif %}</div>
+  <h1 class="mp-display text-[36px] leading-[1] tracking-tight mb-2">
+    {% if upgrade_guest %}Upgrade your account{% else %}Create an account{% endif %}
+  </h1>
+  <p class="text-[13px] text-[var(--mp-ink-muted)] mb-6">
+    {% if upgrade_guest %}
+      Pick a real username, add an email, set a password. Your matches and memories stay with you.
+    {% else %}
+      Already a member? <a href="/login{% if next and next != '/' %}?next={{ next }}{% endif %}" class="mp-link">Log in →</a>
+    {% endif %}
+  </p>
+
+  {% if error %}
+  <div class="mb-5 rounded-sm border p-3 text-sm" style="border-color: rgba(168,66,63,0.45); background: rgba(168,66,63,0.08); color: #E79E9B;">
+    {% if error == 'empty' %}Username can't be blank.
+    {% elif error == 'too_short' %}Username must be at least 3 characters.
+    {% elif error == 'too_long' %}Username must be 24 characters or fewer.
+    {% elif error == 'invalid_chars' %}Usernames: lowercase letters, digits, underscores only.
+    {% elif error == 'username_taken' %}That username is already in use.
+    {% elif error == 'email_empty' %}Email is required.
+    {% elif error == 'email_invalid' %}That email doesn't look right.
+    {% elif error == 'email_taken' %}That email is already registered.
+    {% elif error == 'password_empty' %}Password can't be blank.
+    {% elif error == 'password_too_short' %}Pick a longer password (8+ characters).
+    {% elif error == 'password_too_long' %}That password is too long.
+    {% elif error == 'password_mismatch' %}The two password fields don't match.
+    {% else %}Error: {{ error }}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/signup" class="space-y-5 mp-panel rounded-sm p-6 mp-framed relative">
+    <span class="mp-frame-tl"></span><span class="mp-frame-br"></span>
+    <input type="hidden" name="next" value="{{ next or '/' }}" />
+    <div>
+      <label class="mp-eyebrow block mb-2">Username</label>
+      <input required autofocus name="username" minlength="3" maxlength="24" pattern="[a-z0-9_]+"
+             autocomplete="username"
+             class="mp-input w-full mp-mono" placeholder="your_username" />
+      <p class="text-[11px] text-[var(--mp-ink-faint)] mt-2">Lowercase letters, digits, underscore. 3–24 chars.</p>
+    </div>
+    <div>
+      <label class="mp-eyebrow block mb-2">Email</label>
+      <input required name="email" type="email" autocomplete="email"
+             class="mp-input w-full mp-mono" placeholder="you@example.com" />
+    </div>
+    <div>
+      <label class="mp-eyebrow block mb-2">Password</label>
+      <input required name="password" type="password" minlength="8"
+             autocomplete="new-password"
+             class="mp-input w-full mp-mono" placeholder="••••••••" />
+    </div>
+    <div>
+      <label class="mp-eyebrow block mb-2">Confirm password</label>
+      <input required name="password_confirm" type="password" minlength="8"
+             autocomplete="new-password"
+             class="mp-input w-full mp-mono" placeholder="••••••••" />
+    </div>
+    <button class="mp-btn mp-btn-brass w-full justify-center" style="padding: 0.65rem 1rem;">
+      {% if upgrade_guest %}Upgrade{% else %}Create account{% endif %} ›
+    </button>
+  </form>
+</div>
+{% endblock %}

@@ -46,20 +46,37 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
 
-def initial_mood_for_character(character: Character) -> MoodState:
+def initial_mood_for_character(
+    character: Character,
+    *,
+    tone_bias: dict[str, float] | None = None,
+) -> MoodState:
     """Seed the mood from character sliders.
 
     Rationale: neutral initialization would flatten character differences in
     the opening phase. We derive a starting mood from the Phase 1 sliders
     so a high-aggression/high-trash-talk character enters the game already
     hot, not neutral.
+
+    Phase 4.3 — an optional `tone_bias` dict may carry evolution-driven
+    additive offsets for `confidence` and `tilt` baselines. Callers that
+    have loaded a `CharacterEvolutionState` pass `tone_bias_for(state)`
+    here; call-sites without an evolution context omit it and behaviour
+    is unchanged.
     """
     aggression = _clamp(character.aggression / 10.0)
     engagement = _clamp(0.6 + (character.trash_talk - 5) * 0.05)
+    confidence = 0.5
+    tilt = 0.0
+    if tone_bias:
+        confidence = _clamp(confidence + float(tone_bias.get("confidence_baseline", 0.0)))
+        tilt = _clamp(tilt + float(tone_bias.get("tilt_baseline", 0.0)) * -1.0)
+        # Note: `tilt_baseline` is negative on loss streaks; multiplied by
+        # -1 so a loss streak raises the tilt mood component.
     return MoodState(
         aggression=aggression,
-        confidence=0.5,
-        tilt=0.0,
+        confidence=confidence,
+        tilt=tilt,
         engagement=engagement,
     )
 

@@ -20,6 +20,8 @@ dependencies = [
     "numpy>=1.24.0",
     "alembic>=1.13.0",
     "python-socketio>=5.11.0",
+    "argon2-cffi>=23.1.0",
+    "email-validator>=2.0.0",
 ]
 
 [project.optional-dependencies]

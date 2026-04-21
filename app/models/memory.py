@@ -30,6 +30,10 @@ class MemoryType(str, enum.Enum):
     HABIT = "habit"
     OPINION = "opinion"
     OBSERVATION = "observation"
+    # Phase 4.3 — learned patterns the character has picked up over
+    # matches (e.g. trap patterns that burned them once). Fed into the
+    # Subconscious's normal retrieval flow.
+    LEARNING = "learning"
 
 
 def _uuid() -> str:

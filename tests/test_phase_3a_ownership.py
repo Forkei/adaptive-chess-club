@@ -8,6 +8,7 @@ from app.db import SessionLocal
 from app.main import create_app
 from app.models.character import Character, CharacterState, ContentRating, Visibility
 from app.models.match import Player
+from tests.conftest import signup_and_login
 
 
 def _client() -> TestClient:
@@ -16,7 +17,7 @@ def _client() -> TestClient:
 
 def _login(username: str) -> TestClient:
     c = _client()
-    c.post("/login", data={"username": username, "next": "/"})
+    signup_and_login(c, username)
     return c
 
 

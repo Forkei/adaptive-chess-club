@@ -22,7 +22,16 @@ import pytest  # noqa: E402
 from sqlalchemy import delete  # noqa: E402
 
 from app.db import SessionLocal, engine, init_db  # noqa: E402
+from app.models.auth import PasswordResetToken  # noqa: E402
+from app.models.chat import CharacterChatSession, CharacterChatTurn  # noqa: E402
 from app.models.character import Character  # noqa: E402
+from app.models.evolution import CharacterEvolutionState  # noqa: E402
+from app.models.lobby import (  # noqa: E402
+    Lobby,
+    LobbyMembership,
+    MatchmakingQueue,
+    PvpMatch,
+)
 from app.models.match import Match, MatchAnalysis, Move, OpponentProfile, Player  # noqa: E402
 from app.models.memory import Memory  # noqa: E402
 
@@ -40,6 +49,14 @@ def _clean_tables():
         conn.execute(delete(Move))
         conn.execute(delete(Match))
         conn.execute(delete(OpponentProfile))
+        conn.execute(delete(PvpMatch))
+        conn.execute(delete(MatchmakingQueue))
+        conn.execute(delete(LobbyMembership))
+        conn.execute(delete(Lobby))
+        conn.execute(delete(CharacterChatTurn))
+        conn.execute(delete(CharacterChatSession))
+        conn.execute(delete(CharacterEvolutionState))
+        conn.execute(delete(PasswordResetToken))
         conn.execute(delete(Player))
         conn.execute(delete(Memory))
         conn.execute(delete(Character))
@@ -53,3 +70,44 @@ def db_session():
         yield session
     finally:
         session.close()
+
+
+# --- Phase 4.0a auth helpers --------------------------------------------
+#
+# Pre-4.0a tests just POSTed /login with a username to "become" that user —
+# the route auto-created the row. Post-4.0a, /login requires credentials.
+# `signup_and_login` does the signup step so test setup stays a one-liner.
+
+
+def signup_and_login(client, username: str, *, email: str | None = None,
+                     password: str = "testpass123"):
+    """Create a player via /signup and leave `client` logged in as them.
+
+    Returns the response from POST /signup. Idempotent-ish: if the
+    username already exists, falls back to POST /login with the same
+    password (matches real user flow).
+    """
+    if email is None:
+        email = f"{username}@test.example"
+    r = client.post(
+        "/signup",
+        data={
+            "username": username,
+            "email": email,
+            "password": password,
+            "password_confirm": password,
+            "next": "/",
+        },
+    )
+    if r.status_code == 303 and "error=" in r.headers.get("location", ""):
+        # Fall back to login — account already exists.
+        r = client.post(
+            "/login",
+            data={"identifier": username, "password": password, "next": "/"},
+        )
+    return r
+
+
+@pytest.fixture
+def signup_login():
+    return signup_and_login

@@ -17,6 +17,7 @@ from app.models.character import (
     rating_level,
 )
 from app.models.match import Player
+from tests.conftest import signup_and_login
 
 
 def _client() -> TestClient:
@@ -25,7 +26,7 @@ def _client() -> TestClient:
 
 def _login(username: str, *, rating: ContentRating | None = None) -> TestClient:
     c = _client()
-    c.post("/login", data={"username": username, "next": "/"})
+    signup_and_login(c, username)
     if rating is not None:
         c.post("/settings", data={"display_name": username, "max_content_rating": rating.value})
     return c

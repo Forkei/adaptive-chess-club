@@ -153,6 +153,7 @@ def test_processor_end_to_end_happy_path():
             "engine_analysis",
             "feature_extraction",
             "elo_ratchet",
+            "evolution",  # Phase 4.3 — pure-data step after Elo ratchet.
             "memory_generation",
             "narrative_summary",
         }

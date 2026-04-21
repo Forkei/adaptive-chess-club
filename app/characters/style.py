@@ -54,16 +54,30 @@ _TRASH_TALK = {
 }
 
 
-def style_to_prompt_fragments(character: Character) -> StyleFragments:
+def style_to_prompt_fragments(
+    character: Character,
+    *,
+    slider_override: dict[str, int] | None = None,
+) -> StyleFragments:
     """Return a dict of prompt snippets keyed by slider name.
 
     Pure function — does not read the DB or mutate the character.
+
+    Phase 4.3 — an optional `slider_override` dict (from
+    `evolution.effective_sliders(character, state)`) replaces the base
+    values. Callers that haven't loaded an evolution state pass nothing
+    and behaviour is unchanged.
     """
+    overrides = slider_override or {}
+
+    def pick(name: str) -> int:
+        return int(overrides.get(name, getattr(character, name)))
+
     return StyleFragments(
-        aggression=_AGGRESSION[_bucket(character.aggression)],
-        risk_tolerance=_RISK_TOLERANCE[_bucket(character.risk_tolerance)],
-        patience=_PATIENCE[_bucket(character.patience)],
-        trash_talk=_TRASH_TALK[_bucket(character.trash_talk)],
+        aggression=_AGGRESSION[_bucket(pick("aggression"))],
+        risk_tolerance=_RISK_TOLERANCE[_bucket(pick("risk_tolerance"))],
+        patience=_PATIENCE[_bucket(pick("patience"))],
+        trash_talk=_TRASH_TALK[_bucket(pick("trash_talk"))],
     )
 
 

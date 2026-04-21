@@ -1,4 +1,10 @@
-"""Phase 3a: username login flow + cookie auth on protected routes."""
+"""Username/email login flow + cookie auth on protected routes.
+
+Originally Phase 3a (username-only). Updated for Phase 4.0a: /login now
+requires credentials, /signup creates the account. Legacy rows without a
+`password_hash` still log in with identifier-only (the migration path for
+pre-4.0a dev accounts).
+"""
 
 from __future__ import annotations
 
@@ -8,102 +14,222 @@ from app.auth import generate_guest_username
 from app.db import SessionLocal
 from app.main import create_app
 from app.models.match import Player
+from tests.conftest import signup_and_login
 
 
 def _client() -> TestClient:
     return TestClient(create_app(), follow_redirects=False)
 
 
-# --- /login form ---------------------------------------------------------
+# --- /signup -------------------------------------------------------------
 
 
-def test_login_creates_new_player_when_username_is_new():
+def test_signup_creates_new_player_with_email_and_password():
     c = _client()
-    r = c.post("/login", data={"username": "alice", "next": "/"})
+    r = signup_and_login(c, "alice")
     assert r.status_code == 303
-    assert r.cookies.get("player_id")
+    assert c.cookies.get("player_id")
     assert "flash=welcome" in r.headers["location"]
 
-    # The player exists in the DB.
     with SessionLocal() as s:
         p = s.query(Player).filter(Player.username == "alice").one()
-        assert p.display_name == "alice"
+        assert p.email == "alice@test.example"
+        assert p.password_hash  # hashed, not plaintext
+        assert p.password_hash != "testpass123"
 
 
-def test_login_reuses_existing_player_by_username():
+def test_signup_rejects_duplicate_username():
     c = _client()
-    # First login creates.
-    r1 = c.post("/login", data={"username": "bob", "next": "/"})
-    first_id = r1.cookies["player_id"]
-
-    # Fresh client (no cookie) logs in with same username — gets the same player.
+    signup_and_login(c, "bob")
     c2 = _client()
-    r2 = c2.post("/login", data={"username": "bob", "next": "/"})
-    second_id = r2.cookies["player_id"]
-    assert first_id == second_id
-    assert "welcome_back" in r2.headers["location"]
-
-
-def test_login_normalizes_case_and_whitespace():
-    c = _client()
-    r = c.post("/login", data={"username": "  Carol  ", "next": "/"})
+    r = c2.post(
+        "/signup",
+        data={
+            "username": "bob",
+            "email": "different@test.example",
+            "password": "testpass123",
+            "password_confirm": "testpass123",
+            "next": "/",
+        },
+    )
     assert r.status_code == 303
-    # Normalized to lowercase.
+    assert "error=username_taken" in r.headers["location"]
+
+
+def test_signup_rejects_duplicate_email():
+    c = _client()
+    signup_and_login(c, "carol")
+    c2 = _client()
+    r = c2.post(
+        "/signup",
+        data={
+            "username": "carol2",
+            "email": "carol@test.example",
+            "password": "testpass123",
+            "password_confirm": "testpass123",
+            "next": "/",
+        },
+    )
+    assert r.status_code == 303
+    assert "error=email_taken" in r.headers["location"]
+
+
+def test_signup_rejects_password_mismatch():
+    c = _client()
+    r = c.post(
+        "/signup",
+        data={
+            "username": "dave",
+            "email": "dave@test.example",
+            "password": "testpass123",
+            "password_confirm": "different!",
+            "next": "/",
+        },
+    )
+    assert r.status_code == 303
+    assert "error=password_mismatch" in r.headers["location"]
+
+
+def test_signup_rejects_short_password():
+    c = _client()
+    r = c.post(
+        "/signup",
+        data={
+            "username": "eve",
+            "email": "eve@test.example",
+            "password": "short",
+            "password_confirm": "short",
+            "next": "/",
+        },
+    )
+    assert r.status_code == 303
+    assert "error=password_too_short" in r.headers["location"]
+
+
+# --- /login --------------------------------------------------------------
+
+
+def test_login_with_username_and_password():
+    c = _client()
+    signup_and_login(c, "frank")
+
+    # Fresh client (no cookie) — log in with credentials.
+    c2 = _client()
+    r = c2.post(
+        "/login",
+        data={"identifier": "frank", "password": "testpass123", "next": "/"},
+    )
+    assert r.status_code == 303
+    assert c2.cookies.get("player_id")
+    assert "welcome_back" in r.headers["location"]
+
+
+def test_login_with_email():
+    c = _client()
+    signup_and_login(c, "grace", email="grace@example.com")
+
+    c2 = _client()
+    r = c2.post(
+        "/login",
+        data={"identifier": "grace@example.com", "password": "testpass123", "next": "/"},
+    )
+    assert r.status_code == 303
+    assert c2.cookies.get("player_id")
+
+
+def test_login_rejects_wrong_password():
+    c = _client()
+    signup_and_login(c, "henry")
+    c2 = _client()
+    r = c2.post(
+        "/login",
+        data={"identifier": "henry", "password": "WRONG-pass", "next": "/"},
+    )
+    assert r.status_code == 303
+    assert "error=bad_credentials" in r.headers["location"]
+    assert not c2.cookies.get("player_id")
+
+
+def test_login_rejects_unknown_user():
+    c = _client()
+    r = c.post(
+        "/login",
+        data={"identifier": "ghost", "password": "anything!", "next": "/"},
+    )
+    assert r.status_code == 303
+    assert "error=bad_credentials" in r.headers["location"]
+
+
+def test_login_rejects_blank_identifier():
+    c = _client()
+    r = c.post("/login", data={"identifier": "  ", "password": "x", "next": "/"})
+    assert r.status_code == 303
+    assert "error=identifier_required" in r.headers["location"]
+
+
+# --- legacy accounts (no password_hash) ----------------------------------
+
+
+def test_legacy_account_logs_in_with_identifier_only():
+    """Pre-4.0a rows have NULL password_hash — should still log in."""
     with SessionLocal() as s:
-        assert s.query(Player).filter(Player.username == "carol").one() is not None
-        assert s.query(Player).filter(Player.username == "Carol").first() is None
-
-
-def test_login_rejects_invalid_characters():
-    c = _client()
-    r = c.post("/login", data={"username": "Bad Name!", "next": "/"})
-    # Redirected back to login with error code in query.
-    assert r.status_code == 303
-    assert "error=invalid_chars" in r.headers["location"]
-
-
-def test_login_rejects_too_short():
-    c = _client()
-    r = c.post("/login", data={"username": "ab", "next": "/"})
-    assert r.status_code == 303
-    assert "error=too_short" in r.headers["location"]
-
-
-def test_guest_cookie_rename_preserves_player_row():
-    c = _client()
-    # Simulate migrated guest: create a player with guest_* username and
-    # point the cookie at them.
-    with SessionLocal() as s:
-        guest_username = generate_guest_username()
-        player = Player(username=guest_username, display_name="Guest")
-        s.add(player)
+        legacy = Player(username="legacy_user", display_name="Legacy")
+        s.add(legacy)
         s.commit()
-        s.refresh(player)
-        pid = player.id
 
-    c.cookies.set("player_id", pid)
-    r = c.post("/login", data={"username": "dave", "next": "/"})
+    c = _client()
+    r = c.post("/login", data={"identifier": "legacy_user", "next": "/"})
     assert r.status_code == 303
-    assert "renamed" in r.headers["location"]
+    assert c.cookies.get("player_id")
+    # Should hint they need to set a password.
+    assert "flash=needs_password" in r.headers["location"]
+
+
+def test_guest_upgrade_via_signup_preserves_row():
+    """Logged-in guest posts /signup → row is upgraded in place."""
+    c = _client()
+    # Seed a guest row + cookie.
+    with SessionLocal() as s:
+        guest = Player(
+            username=generate_guest_username(), display_name="Guest"
+        )
+        s.add(guest)
+        s.commit()
+        s.refresh(guest)
+        pid = guest.id
+    c.cookies.set("player_id", pid)
+
+    r = c.post(
+        "/signup",
+        data={
+            "username": "iris",
+            "email": "iris@test.example",
+            "password": "testpass123",
+            "password_confirm": "testpass123",
+            "next": "/",
+        },
+    )
+    assert r.status_code == 303
+    assert "flash=upgraded" in r.headers["location"]
 
     with SessionLocal() as s:
-        # Same row, new username. Row count unchanged at 1.
-        renamed = s.query(Player).filter(Player.id == pid).one()
-        assert renamed.username == "dave"
+        upgraded = s.query(Player).filter(Player.id == pid).one()
+        assert upgraded.username == "iris"
+        assert upgraded.email == "iris@test.example"
+        assert upgraded.password_hash
         assert s.query(Player).count() == 1
+
+
+# --- logout + protected routes -------------------------------------------
 
 
 def test_logout_clears_cookie():
     c = _client()
-    c.post("/login", data={"username": "eve", "next": "/"})
+    signup_and_login(c, "jack")
     assert c.cookies.get("player_id")
     r = c.get("/logout")
     assert r.status_code == 303
-    # cookie cleared (set with empty value)
     assert r.headers["location"] == "/login"
-
-
-# --- protected routes ----------------------------------------------------
 
 
 def test_api_route_returns_401_without_cookie():
@@ -124,7 +250,6 @@ def test_html_route_redirects_to_login_without_cookie():
     r = c.get("/characters/new")
     assert r.status_code == 303
     assert "/login" in r.headers["location"]
-    # Preserves intended destination via ?next=
     assert "next=/characters/new" in r.headers["location"] or "next=%2F" in r.headers["location"]
 
 
@@ -137,7 +262,7 @@ def test_landing_is_open_and_shows_login_cta_when_logged_out():
 
 def test_landing_shows_characters_when_logged_in():
     c = _client()
-    c.post("/login", data={"username": "frank", "next": "/"})
+    signup_and_login(c, "karen")
     r = c.get("/")
     assert r.status_code == 200
     assert "Characters" in r.text
@@ -145,8 +270,8 @@ def test_landing_shows_characters_when_logged_in():
 
 def test_api_me_returns_current_player_when_logged_in():
     c = _client()
-    c.post("/login", data={"username": "grace", "next": "/"})
+    signup_and_login(c, "liam")
     r = c.get("/api/me")
     assert r.status_code == 200
     body = r.json()
-    assert body["username"] == "grace"
+    assert body["username"] == "liam"

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Enter a room — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-10 mp-enter mp-enter-1">
+  <div class="mp-eyebrow mb-2">Invite</div>
+  <h1 class="mp-display text-[32px] leading-[1] tracking-tight mb-2">Enter a code</h1>
+  <p class="text-[13px] text-[var(--mp-ink-muted)] mb-6">
+    Six characters from the host. Case doesn't matter.
+  </p>
+
+  {% if error %}
+  <div class="mb-5 rounded-sm border p-3 text-sm" style="border-color: rgba(168,66,63,0.45); background: rgba(168,66,63,0.08); color: #E79E9B;">
+    {% if error == 'not_found' %}No room with that code.
+    {% elif error == 'full' %}That room is already full.
+    {% elif error == 'closed' %}That room has already been closed.
+    {% elif error == 'private' %}That's a private room — use an invite code.
+    {% else %}{{ error }}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/lobby/join" class="space-y-4 mp-panel rounded-sm p-6">
+    <input required autofocus autocomplete="off" name="code" value="{{ code }}"
+           maxlength="6" pattern="[A-Za-z0-9]{6}"
+           class="mp-input w-full mp-mono text-center tracking-[0.4em] text-[22px] uppercase" placeholder="------" />
+    <button class="mp-btn mp-btn-brass w-full justify-center" style="padding: 0.55rem 1rem;">
+      Step inside ›
+    </button>
+  </form>
+
+  <div class="mt-4 text-center text-[12px]">
+    <a href="/lobbies" class="mp-link">← public rooms</a>
+  </div>
+</div>
+{% endblock %}

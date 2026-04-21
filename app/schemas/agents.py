@@ -98,6 +98,20 @@ class SoulResponse(BaseModel):
         description="IDs (from the surfaced memories shown in the prompt) that shaped "
         "this response. Empty if no memory was relevant.",
     )
+    game_action: Literal["none", "propose_game", "start_game"] = Field(
+        default="none",
+        description=(
+            "Phase 4.2.5 — the character's gameplay intent for this turn. "
+            "Only meaningful in the pre-match chat path (in a running match it's ignored). "
+            "'none' = keep chatting, no move toward a game. "
+            "'propose_game' = you just suggested playing ('shall we?'); the client still "
+            "waits for the user to agree. "
+            "'start_game' = either the user has clearly agreed OR you've decided it's time. "
+            "The server will create the match the instant this is returned. "
+            "Do NOT emit 'start_game' on the user's very first message; at least one exchange "
+            "of real conversation should happen first."
+        ),
+    )
     internal_thinking: str | None = Field(
         default=None,
         description="Optional debug trace — logged, never shown to the player. "

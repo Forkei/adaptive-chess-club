@@ -33,8 +33,8 @@ class PresetSpec:
 
 
 VIKTOR = PresetSpec(
-    preset_key="viktor_volkov",
-    name="Viktor Volkov",
+    preset_key="viktor_petrov",
+    name="Viktor Petrov",
     short_description="Gruff ex-Soviet grandmaster who plays for blood.",
     backstory=(
         "Viktor was born in 1963 in a communal apartment in Leningrad. He learned chess from a "

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Finding a match — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-10 mp-enter mp-enter-1">
+  <div class="mp-eyebrow mb-2">Matchmaking</div>
+  <h1 class="mp-display text-[32px] leading-[1] tracking-tight mb-2">Find a match</h1>
+  <p class="text-[13px] text-[var(--mp-ink-muted)] mb-6">
+    We'll pair you with someone near your Elo ({{ player.elo }}).
+    If no-one close is waiting, the net widens over time.
+  </p>
+
+  <div id="queue-state" class="mp-panel rounded-sm p-6 text-center">
+    <div class="mp-display italic text-[19px] mb-2" id="headline">Ready.</div>
+    <div class="text-[12px] text-[var(--mp-ink-faint)] mp-mono uppercase tracking-[0.15em]" id="detail">Not yet queued.</div>
+
+    <div class="mt-6 flex items-center justify-center gap-3">
+      <button id="queue-btn" class="mp-btn mp-btn-brass" style="padding: 0.65rem 1.2rem;">Queue me</button>
+      <button id="cancel-btn" class="mp-btn mp-btn-ghost hidden">Cancel</button>
+    </div>
+  </div>
+
+  <div class="mt-6 text-center text-[12px]">
+    <a href="/lobbies" class="mp-link">← rooms</a>
+  </div>
+</div>
+
+<script>
+  const queueBtn  = document.getElementById('queue-btn');
+  const cancelBtn = document.getElementById('cancel-btn');
+  const headEl    = document.getElementById('headline');
+  const detEl     = document.getElementById('detail');
+
+  const BANDS = [50, 100, 200, 400];
+
+  let pollTimer = null;
+
+  async function enqueue() {
+    await fetch('/matchmaking/enqueue', { method: 'POST' });
+    queueBtn.classList.add('hidden');
+    cancelBtn.classList.remove('hidden');
+    headEl.textContent = 'Looking for a partner…';
+    detEl.textContent = 'band ±50';
+    if (!pollTimer) pollTimer = setInterval(poll, 2000);
+    poll();
+  }
+
+  async function cancel() {
+    await fetch('/matchmaking/cancel', { method: 'POST' });
+    stopPoll();
+    queueBtn.classList.remove('hidden');
+    cancelBtn.classList.add('hidden');
+    headEl.textContent = 'Ready.';
+    detEl.textContent = 'Not queued.';
+  }
+
+  function stopPoll() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch('/matchmaking/poll');
+      if (!r.ok) return;
+      const s = await r.json();
+      if (s.matched_lobby_id) {
+        stopPoll();
+        headEl.textContent = 'Paired. Taking you in…';
+        detEl.textContent = '';
+        window.location.href = '/lobby/' + s.matched_lobby_id;
+        return;
+      }
+      if (!s.queued) return;
+      const step = s.band_step;
+      const band = step < BANDS.length ? `±${BANDS[step]}` : 'anyone';
+      detEl.textContent = `band ${band} · waited ${Math.round(s.waited_seconds)}s`;
+    } catch (_) {}
+  }
+
+  queueBtn.addEventListener('click', enqueue);
+  cancelBtn.addEventListener('click', cancel);
+</script>
+{% endblock %}

@@ -62,6 +62,20 @@ class Settings(BaseSettings):
     # eligible response.
     chat_triggered_soul_min_interval_ms: int = 10000
 
+    # Phase 4.0a — email/password auth.
+    # Session cookie is unsigned (value is the player UUID). Kept for forward
+    # compatibility if we later want to sign it with HMAC.
+    session_secret: str = ""
+    password_min_length: int = 8
+    password_reset_token_ttl_minutes: int = 60
+    # SMTP disabled by default → password-reset links are written to the log
+    # dir (dev mode). Fill these in .env for real mail.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "no-reply@metropolis-chess.local"
+
     @property
     def log_path(self) -> Path:
         p = Path(self.log_dir)

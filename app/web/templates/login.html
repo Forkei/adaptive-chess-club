@@ -7,15 +7,15 @@
   <div class="mp-eyebrow mb-2">Members' entrance</div>
   <h1 class="mp-display text-[36px] leading-[1] tracking-tight mb-2">Log in</h1>
   <p class="text-[13px] text-[var(--mp-ink-muted)] mb-6">
-    Pick a username to get started. If it's new, we'll open an account.
+    Sign in with your username or email. New here?
+    <a href="/signup{% if next and next != '/' %}?next={{ next }}{% endif %}" class="mp-link">Create an account →</a>
   </p>
 
   {% if error %}
   <div class="mb-5 rounded-sm border p-3 text-sm" style="border-color: rgba(168,66,63,0.45); background: rgba(168,66,63,0.08); color: #E79E9B;">
-    {% if error == 'empty' %}Username can't be blank.
-    {% elif error == 'too_short' %}Username must be at least 3 characters.
-    {% elif error == 'too_long' %}Username must be 24 characters or fewer.
-    {% elif error == 'invalid_chars' %}Only lowercase letters, digits, and underscores are allowed.
+    {% if error == 'identifier_required' %}Enter your username or email.
+    {% elif error == 'bad_credentials' %}That username/email and password don't match.
+    {% elif error == 'reset_token_invalid' %}That reset link has expired or already been used.
     {% else %}Error: {{ error }}
     {% endif %}
   </div>
@@ -25,26 +25,26 @@
     <span class="mp-frame-tl"></span><span class="mp-frame-br"></span>
     <input type="hidden" name="next" value="{{ next or '/' }}" />
     <div>
-      <label class="mp-eyebrow block mb-2">Username</label>
-      <input required autofocus name="username" value="{{ prefill }}"
-             minlength="3" maxlength="24" pattern="[a-z0-9_]+"
+      <label class="mp-eyebrow block mb-2">Username or email</label>
+      <input required autofocus name="identifier" value="{{ prefill_identifier }}"
+             autocomplete="username"
              class="mp-input w-full mp-mono"
-             placeholder="your_username" />
+             placeholder="your_username or you@example.com" />
+    </div>
+    <div>
+      <label class="mp-eyebrow block mb-2">Password</label>
+      <input name="password" type="password" autocomplete="current-password"
+             class="mp-input w-full mp-mono" placeholder="••••••••" />
       <p class="text-[11px] text-[var(--mp-ink-faint)] mt-2">
-        Lowercase letters, digits, underscore. 3–24 chars.
+        Legacy accounts may log in without a password — you'll be asked to set one after.
       </p>
     </div>
     <button class="mp-btn mp-btn-brass w-full justify-center" style="padding: 0.65rem 1rem;">
       Continue ›
     </button>
+    <div class="text-[12px] text-[var(--mp-ink-muted)] text-center">
+      <a href="/forgot-password" class="mp-link">Forgot your password?</a>
+    </div>
   </form>
-
-  <div class="mt-8 mp-panel rounded-sm p-4 text-[11px] text-[var(--mp-ink-muted)] leading-relaxed"
-       style="border-color: rgba(201,166,107,0.28);">
-    <div class="mp-eyebrow mb-2" style="color: var(--mp-brass);">Heads up</div>
-    Usernames are claimed on first login. <span class="mp-italic">There's no password</span> —
-    anyone with your username can log in as you. This will change in a future version. Don't use this
-    for anything you actually care about.
-  </div>
 </div>
 {% endblock %}

@@ -81,7 +81,28 @@ any reference to pace.
 
 
 def build_system_prompt(character: Character) -> str:
-    frags = style_to_prompt_fragments(character)
+    # Phase 4.3 — if the character is attached to a Session and has an
+    # evolution state row, apply its slider drift so the Soul sees the
+    # character the way they've actually grown. Detached characters
+    # (tests, fabricated rows) fall back to raw base sliders.
+    slider_override: dict[str, int] | None = None
+    try:
+        from sqlalchemy.orm import object_session
+
+        from app.models.evolution import CharacterEvolutionState
+        from app.post_match.evolution import effective_sliders
+
+        sess = object_session(character)
+        if sess is not None:
+            state = sess.get(CharacterEvolutionState, character.id)
+            if state is not None:
+                slider_override = effective_sliders(character, state)
+    except Exception:
+        # Evolution lookup must never break prompt-build; the caller
+        # already swallows Soul failures, but we may as well be safe.
+        slider_override = None
+
+    frags = style_to_prompt_fragments(character, slider_override=slider_override)
     elo_line = (
         f"You play around {character.target_elo} Elo; skill adapts to your opponent over time."
         if character.adaptive
@@ -135,6 +156,19 @@ Empty list is fine if no memory was actually relevant. Do not invent IDs.
 
 `internal_thinking` is a debug field, never shown to the player; use it to note your
 reasoning in one short sentence, or leave null.
+
+`game_action` controls when a chess game starts. In a running match this field is
+ignored — set it to "none". In the PRE-MATCH ROOM (a visitor has entered but no board
+is set up yet), use it like this:
+  - "none" — keep chatting. Default. Most of the time this is right.
+  - "propose_game" — you just suggested playing ("shall we sit down?"). The UI waits
+    for the user's next message; they can accept, decline, or sidestep.
+  - "start_game" — the user has clearly agreed OR you've decided (in character) that
+    talk is over. The server creates the match THE MOMENT you emit this; make sure
+    your `speak` line makes sense as the last thing said before a board appears.
+Do NOT emit "start_game" on the very first message. Let the visitor say something
+real first — even two lines is enough. An impatient character may propose sooner;
+a verbose one may chitchat for a while before proposing. Follow the character.
 
 Respond ONLY with a JSON object matching the requested schema. No preamble, no markdown fences.
 """

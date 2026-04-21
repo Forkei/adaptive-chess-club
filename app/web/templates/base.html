@@ -280,6 +280,42 @@
     .mp-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .mp-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
+    /* Phase 4.1 — room backdrop. Full-bleed layer behind content,
+       soft-faded so UI panels stay legible. Video/image is injected by
+       the page; this class sizes and dims it. */
+    .mp-room-backdrop {
+      position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      opacity: 0.22;
+      filter: saturate(0.85) blur(2px);
+      object-fit: cover;
+      width: 100%; height: 100%;
+    }
+    .mp-room-backdrop-tint {
+      position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background:
+        radial-gradient(1200px 700px at 70% 0%, rgba(0,0,0,0.35), transparent 60%),
+        linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0.55));
+    }
+
+    /* Phase 4.1 — header ambient-mute toggle. */
+    .mp-ambient-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px;
+      border-radius: 2px;
+      border: 1px solid var(--mp-hairline-2);
+      color: var(--mp-ink-muted);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 14px;
+      cursor: pointer;
+      transition: color 140ms var(--mp-ease), border-color 140ms var(--mp-ease), background 140ms var(--mp-ease);
+    }
+    .mp-ambient-toggle:hover { color: var(--mp-ink); border-color: var(--mp-brass-dim); }
+    .mp-ambient-toggle[data-muted="false"] {
+      color: var(--mp-brass);
+      border-color: var(--mp-brass-dim);
+      background: rgba(201,166,107,0.06);
+    }
+
     /* Nav user menu — <details>/<summary> dropdown. Native semantics =
        keyboard-accessible for free; CSS polish only. */
     .mp-user-menu { position: relative; }
@@ -327,7 +363,25 @@
 
   {% block head_extra %}{% endblock %}
 </head>
-<body class="min-h-screen">
+{#
+  Phase 4.1 — per-character room theme.
+  When a route provides `room` in context, its `css_vars` are injected as
+  inline custom-property overrides on <body>; child elements inherit the
+  new values and all our existing mp-* classes retheme automatically.
+  `data-theme` is a hook for page CSS that needs per-room rules.
+#}
+<body class="min-h-screen"
+  {% if room and room.slug and room.slug != "default" %}data-theme="{{ room.slug }}"{% endif %}
+  {% if room and room.css_vars %}style="{% for k, v in room.css_vars.items() %}{{ k }}: {{ v }};{% endfor %}"{% endif %}>
+  {% if room and room.background %}
+    {% if room.background_kind == "video" %}
+    <video class="mp-room-backdrop" autoplay muted loop playsinline preload="auto" src="{{ room.background }}"></video>
+    {% elif room.background_kind == "image" %}
+    <img class="mp-room-backdrop" src="{{ room.background }}" alt="" aria-hidden="true" />
+    {% endif %}
+    <div class="mp-room-backdrop-tint"></div>
+  {% endif %}
+
   <header class="border-b border-[var(--mp-hairline)] bg-[var(--mp-surface-1)]/70 backdrop-blur-sm">
     <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
       <a href="/" class="flex items-center gap-3 group">
@@ -338,6 +392,11 @@
         <span class="mp-display text-[19px] tracking-tight">Metropolis <span class="mp-italic text-[var(--mp-ink-muted)]">Chess Club</span></span>
       </a>
       <nav class="text-[13px] text-[var(--mp-ink-muted)] space-x-5 flex items-center">
+        {% if room and room.ambient_track %}
+        <button id="mp-ambient-toggle" class="mp-ambient-toggle" data-muted="true" aria-pressed="false" aria-label="Toggle room audio">
+          <span aria-hidden="true">♪̸</span>
+        </button>
+        {% endif %}
         {% if player %}
         <a href="/" class="hover:text-[var(--mp-ink)] transition">Characters</a>
         <a href="/discovery" class="hover:text-[var(--mp-ink)] transition">Discovery</a>
@@ -382,5 +441,10 @@
     <div class="mp-brass-rule mb-6"></div>
     <div class="mp-eyebrow">Metropolis Chess Club · est. 2026</div>
   </footer>
+
+  {% if room and room.ambient_track %}
+  <audio id="mp-ambient" src="{{ room.ambient_track }}" loop preload="auto"></audio>
+  <script src="/static/js/ambient.js" defer></script>
+  {% endif %}
 </body>
 </html>

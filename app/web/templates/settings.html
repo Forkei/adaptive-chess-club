@@ -10,8 +10,39 @@
     Username is permanent in this release. Rating changes apply to new matches only — they don't interrupt a game in progress.
   </p>
 
+  {% if flash %}
+  <div class="mb-5 rounded-sm border p-3 text-sm" style="border-color: rgba(201,166,107,0.45); background: rgba(201,166,107,0.08);">
+    {% if flash == 'saved' %}Settings saved.
+    {% elif flash == 'password_saved' %}Password updated.
+    {% elif flash == 'email_saved' %}Email updated.
+    {% else %}{{ flash }}
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if error %}
-  <div class="mb-5 rounded-sm border p-3 text-sm" style="border-color: rgba(168,66,63,0.45); background: rgba(168,66,63,0.08); color: #E79E9B;">{{ error }}</div>
+  <div class="mb-5 rounded-sm border p-3 text-sm" style="border-color: rgba(168,66,63,0.45); background: rgba(168,66,63,0.08); color: #E79E9B;">
+    {% if error == 'invalid_rating' %}That content rating isn't recognised.
+    {% elif error == 'empty_display_name' %}Display name can't be blank.
+    {% elif error == 'display_name_too_long' %}Display name must be 80 characters or fewer.
+    {% elif error == 'wrong_current_password' %}Current password is incorrect.
+    {% elif error == 'password_empty' %}New password can't be blank.
+    {% elif error == 'password_too_short' %}Pick a longer password (8+ characters).
+    {% elif error == 'password_too_long' %}That password is too long.
+    {% elif error == 'password_mismatch' %}The two password fields don't match.
+    {% elif error == 'email_empty' %}Email can't be blank.
+    {% elif error == 'email_invalid' %}That email doesn't look right.
+    {% elif error == 'email_taken' %}That email is already registered.
+    {% else %}{{ error }}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if not has_password %}
+  <div class="mb-6 rounded-sm border p-4 text-sm" style="border-color: rgba(201,166,107,0.45); background: rgba(201,166,107,0.06);">
+    <div class="mp-eyebrow mb-1" style="color: var(--mp-brass);">Heads up</div>
+    Your account doesn't have a password yet. Set one below so no-one else can log in with just your username.
+  </div>
   {% endif %}
 
   <form method="post" action="/settings" class="space-y-6">
@@ -45,6 +76,42 @@
     </fieldset>
 
     <button class="mp-btn mp-btn-brass" style="padding: 0.65rem 1.4rem;">Save</button>
+  </form>
+
+  <form method="post" action="/settings/email" class="mt-8 mp-panel rounded-sm p-5">
+    <div class="mp-eyebrow mb-2" style="color: var(--mp-brass);">Email</div>
+    <p class="text-[11px] text-[var(--mp-ink-faint)] mb-3">
+      {% if has_email %}Current: <span class="mp-mono">{{ player.email }}</span>. Updating here replaces it.{% else %}No email on file yet.{% endif %}
+    </p>
+    <input required name="new_email" type="email" value="{{ player.email or '' }}"
+           class="mp-input w-full mp-mono" placeholder="you@example.com" />
+    <button class="mt-3 mp-btn mp-btn-brass" style="padding: 0.5rem 1.1rem;">Save email</button>
+  </form>
+
+  <form method="post" action="/settings/password" class="mt-6 mp-panel rounded-sm p-5 space-y-3">
+    <div class="mp-eyebrow mb-1" style="color: var(--mp-brass);">
+      {% if has_password %}Change password{% else %}Set a password{% endif %}
+    </div>
+    {% if has_password %}
+    <div>
+      <label class="mp-eyebrow block mb-1 text-[10px]">Current password</label>
+      <input required name="current_password" type="password" autocomplete="current-password"
+             class="mp-input w-full mp-mono" placeholder="••••••••" />
+    </div>
+    {% endif %}
+    <div>
+      <label class="mp-eyebrow block mb-1 text-[10px]">New password</label>
+      <input required name="new_password" type="password" minlength="8" autocomplete="new-password"
+             class="mp-input w-full mp-mono" placeholder="••••••••" />
+    </div>
+    <div>
+      <label class="mp-eyebrow block mb-1 text-[10px]">Confirm new password</label>
+      <input required name="new_password_confirm" type="password" minlength="8" autocomplete="new-password"
+             class="mp-input w-full mp-mono" placeholder="••••••••" />
+    </div>
+    <button class="mp-btn mp-btn-brass" style="padding: 0.5rem 1.1rem;">
+      {% if has_password %}Change password{% else %}Set password{% endif %}
+    </button>
   </form>
 </div>
 {% endblock %}

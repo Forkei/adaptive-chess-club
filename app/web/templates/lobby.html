@@ -1,0 +1,437 @@
+{% extends "base.html" %}
+
+{% block title %}Room {{ lobby.code }} — Metropolis Chess Club{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* Phase 4.2e — interactive room controls. The door, lock, radio, and
+     lamp are meant to feel like real things you touch, not a settings
+     drawer. CSS only; JS just toggles classes + POSTs state. */
+
+  .mp-room-wall {
+    background:
+      linear-gradient(180deg, rgba(201,166,107,0.04) 0%, transparent 50%),
+      var(--mp-surface-1);
+    border: 1px solid var(--mp-hairline);
+    padding: 32px 28px 28px;
+    position: relative;
+  }
+  .mp-room-wall::before {
+    content: ''; position: absolute; inset: 6px;
+    border: 1px solid rgba(201,166,107,0.10);
+    pointer-events: none;
+  }
+
+  /* Door — a bordered rectangle that "swings" when toggled.
+     Pivot on the left edge so it reads as a hinged door. */
+  .door-wrap { perspective: 700px; }
+  .door {
+    width: 86px; height: 140px;
+    position: relative;
+    transform-origin: left center;
+    transition: transform 620ms cubic-bezier(0.22, 0.61, 0.36, 1), filter 380ms;
+    cursor: pointer;
+    background:
+      linear-gradient(180deg, #3B2717 0%, #1F150C 100%);
+    border: 2px solid var(--mp-brass-dim);
+    box-shadow: inset 0 0 0 4px rgba(0,0,0,0.35), 0 8px 14px rgba(0,0,0,0.5);
+  }
+  .door::before {
+    content: ''; position: absolute; left: 14%; right: 14%; top: 10%; bottom: 55%;
+    border: 1px solid rgba(201,166,107,0.18);
+  }
+  .door::after {
+    content: ''; position: absolute; left: 14%; right: 14%; top: 55%; bottom: 10%;
+    border: 1px solid rgba(201,166,107,0.18);
+  }
+  .door-knob {
+    position: absolute; right: 10px; top: 50%; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--mp-brass-bright);
+    box-shadow: 0 0 0 2px rgba(201,166,107,0.2), 0 0 6px rgba(255, 220, 150, 0.35);
+    transform: translateY(-50%);
+  }
+  .door[data-open="true"] { transform: rotateY(-62deg); filter: brightness(1.05); }
+
+  /* Lock — a small brass padlock that rotates when toggled. */
+  .lock {
+    width: 44px; height: 44px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--mp-brass-bright);
+    font-size: 24px;
+    border: 1px solid var(--mp-brass-dim);
+    border-radius: 50%;
+    background: rgba(201,166,107,0.06);
+    transition: transform 320ms, background 200ms;
+    user-select: none;
+  }
+  .lock:hover { background: rgba(201,166,107,0.12); }
+  .lock[data-open="true"] { transform: rotate(-20deg); color: var(--mp-felt-bright); }
+
+  /* Radio — dial + stations + volume knob. */
+  .radio {
+    background:
+      linear-gradient(180deg, #2B2218 0%, #1A140D 100%);
+    border: 1px solid var(--mp-brass-dim);
+    padding: 18px 16px;
+    box-shadow: inset 0 2px 0 rgba(255,255,255,0.05), inset 0 -2px 0 rgba(0,0,0,0.35);
+  }
+  .radio-stations {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+  }
+  .radio-station {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    padding: 5px 9px; border-radius: 2px;
+    background: rgba(201,166,107,0.04);
+    border: 1px solid var(--mp-hairline-2);
+    color: var(--mp-ink-muted);
+    cursor: pointer;
+    transition: all 160ms var(--mp-ease);
+  }
+  .radio-station:hover { color: var(--mp-ink); border-color: var(--mp-brass-dim); }
+  .radio-station.active {
+    color: var(--mp-bg);
+    background: var(--mp-brass);
+    border-color: var(--mp-brass-bright);
+    font-weight: 500;
+  }
+  .volume-knob {
+    display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  }
+  .volume-knob input[type=range] { flex: 1; accent-color: var(--mp-brass); }
+
+  /* Tabletop clock — small digital table clock the host taps to cycle
+     through time-control presets. 4.2.5 is display-only; Phase 4.3+ will
+     make it actually tick. */
+  .clock {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 110px; padding: 14px 18px;
+    background:
+      linear-gradient(180deg, #141210 0%, #0B0A09 100%);
+    border: 1px solid var(--mp-brass-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 22px;
+    letter-spacing: 0.10em;
+    color: var(--mp-brass-bright);
+    text-shadow: 0 0 8px rgba(201,166,107,0.35);
+    cursor: pointer;
+    user-select: none;
+    box-shadow: inset 0 2px 0 rgba(255,255,255,0.05), inset 0 -2px 0 rgba(0,0,0,0.45);
+    transition: filter 180ms;
+  }
+  .clock:hover { filter: brightness(1.15); }
+  .clock .clock-label { font-size: 10px; letter-spacing: 0.22em; color: var(--mp-ink-faint); text-transform: uppercase; margin-right: 8px; }
+
+  /* Lamp — a big circular element tinted by lights_hue, with a
+     brightness slider + hue picker beside it. Visually reflects live state. */
+  .lamp {
+    width: 82px; height: 82px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%,
+                rgba(255,255,255,0.75) 0%,
+                var(--lamp-color, #C9A66B) 30%,
+                rgba(20,15,8,0.9) 80%);
+    box-shadow: 0 0 22px rgba(201,166,107,0.35), inset 0 0 0 1px rgba(255,255,255,0.15);
+    transition: opacity 220ms, box-shadow 220ms;
+  }
+
+  /* Player chip — compact card for roster. */
+  .player-chip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    background: var(--mp-surface-2);
+    border: 1px solid var(--mp-hairline);
+    border-radius: 2px;
+  }
+  .player-chip.host { border-color: var(--mp-brass-dim); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="mb-6 mp-enter mp-enter-1 flex items-center justify-between">
+  <div>
+    <div class="mp-eyebrow">Room {{ lobby.code }} · {% if is_host %}yours{% else %}guesting{% endif %}</div>
+    <h1 class="mp-display text-[32px] leading-[1] tracking-tight mt-1">
+      {% if is_host %}Your room{% else %}The room{% endif %}
+    </h1>
+  </div>
+  <div class="flex gap-2">
+    <a href="/lobbies" class="mp-btn mp-btn-ghost">← rooms</a>
+    <form method="post" action="/lobby/{{ lobby.id }}/leave" style="display:inline">
+      <button class="mp-btn mp-btn-ghost">Leave</button>
+    </form>
+    {% if is_host %}
+    <form method="post" action="/lobby/{{ lobby.id }}/close" style="display:inline"
+          onsubmit="return confirm('Close the room?');">
+      <button class="mp-btn mp-btn-danger">Close</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] gap-6 mp-enter mp-enter-2">
+
+  {# ── Left column: interactive controls ─────────────────────────────── #}
+  <aside class="space-y-5">
+
+    {# Door + lock #}
+    <div class="mp-room-wall">
+      <div class="mp-eyebrow mb-3" style="color: var(--mp-brass);">Threshold</div>
+      <div class="flex items-center gap-5">
+        <div class="door-wrap">
+          <div id="door" class="door" data-open="{{ 'false' if lobby.is_private else 'true' }}" role="button" aria-label="Toggle door (public/private)">
+            <span class="door-knob"></span>
+          </div>
+        </div>
+        <div class="flex-1 text-[12px] text-[var(--mp-ink-muted)]">
+          <div class="mp-display italic text-[15px]" id="door-state-label"
+               style="color: {% if lobby.is_private %}var(--mp-oxblood){% else %}var(--mp-felt-bright){% endif %};">
+            {% if lobby.is_private %}Closed — private{% else %}Open — public{% endif %}
+          </div>
+          <div class="mt-1">Tap the door to swing it. Open = listed publicly. Closed = invite-code only.</div>
+
+          <div class="mt-4 flex items-center gap-3">
+            <div id="lock" class="lock" data-open="{{ 'true' if lobby.allow_spectators else 'false' }}" role="button" aria-label="Toggle spectator lock">
+              <span id="lock-glyph">{% if lobby.allow_spectators %}⚿{% else %}🔒{% endif %}</span>
+            </div>
+            <div>
+              <div class="mp-eyebrow">Spectator lock</div>
+              <div class="text-[11px] text-[var(--mp-ink-faint)]" id="lock-state-label">
+                {% if lobby.allow_spectators %}unlocked — watchers welcome{% else %}locked — no watchers{% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% if not is_host %}
+      <p class="text-[11px] mp-mono uppercase tracking-[0.15em] mt-4 text-[var(--mp-ink-faint)]">
+        only the host can touch these
+      </p>
+      {% endif %}
+    </div>
+
+    {# Radio #}
+    <div class="radio">
+      <div class="flex items-center justify-between">
+        <div class="mp-eyebrow" style="color: var(--mp-brass-bright);">Radio</div>
+        <div class="text-[10px] mp-mono uppercase tracking-[0.18em] text-[var(--mp-ink-faint)]" id="radio-now">
+          {{ lobby.music_track or '— off —' }}
+        </div>
+      </div>
+      <div class="radio-stations" id="radio-stations">
+        {% for track in known_music_tracks %}
+        <button class="radio-station {% if lobby.music_track == (track if track != 'none' else None) or (track == 'none' and not lobby.music_track) %}active{% endif %}"
+                data-track="{{ '' if track == 'none' else track }}">
+          {{ track }}
+        </button>
+        {% endfor %}
+      </div>
+      <div class="volume-knob">
+        <span class="text-[10px] mp-mono uppercase tracking-[0.15em] text-[var(--mp-ink-faint)]">vol</span>
+        <input id="music-volume" type="range" min="0" max="1" step="0.05" value="{{ lobby.music_volume }}" />
+      </div>
+    </div>
+
+    {# Tabletop clock #}
+    <div class="mp-room-wall flex items-center gap-4">
+      <div class="mp-eyebrow" style="color: var(--mp-brass); min-width: 55px;">Clock</div>
+      <div id="clock" class="clock" role="button" aria-label="Tap to cycle time control">
+        <span class="clock-label">time</span>
+        <span id="clock-value">{{ lobby.time_control }}</span>
+      </div>
+      <div class="text-[11px] text-[var(--mp-ink-faint)] flex-1">
+        Tap the clock to cycle. Display only for now — no ticking yet.
+      </div>
+    </div>
+
+    {# Lights #}
+    <div class="mp-room-wall">
+      <div class="mp-eyebrow mb-3" style="color: var(--mp-brass);">Lights</div>
+      <div class="flex items-center gap-5">
+        <div id="lamp" class="lamp" style="--lamp-color: {{ lobby.lights_hue }}; opacity: {{ 0.4 + 0.6 * lobby.lights_brightness }};"></div>
+        <div class="flex-1 space-y-3">
+          <label class="block">
+            <span class="mp-eyebrow block mb-1 text-[10px]">Brightness</span>
+            <input id="lights-brightness" type="range" min="0.1" max="1" step="0.05" value="{{ lobby.lights_brightness }}" class="w-full accent-[var(--mp-brass)]" />
+          </label>
+          <label class="block">
+            <span class="mp-eyebrow block mb-1 text-[10px]">Hue</span>
+            <input id="lights-hue" type="color" value="{{ lobby.lights_hue }}" class="w-16 h-8 bg-transparent border border-[var(--mp-hairline-2)] rounded-sm" />
+          </label>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  {# ── Right column: roster + start ──────────────────────────────────── #}
+  <main>
+    <div class="mp-panel rounded-sm p-5 mb-5">
+      <div class="flex items-center justify-between mb-3">
+        <div class="mp-eyebrow">Seated</div>
+        <div class="text-[11px] mp-mono uppercase tracking-[0.15em] text-[var(--mp-ink-faint)]">{{ members|length }} / 2</div>
+      </div>
+      <div class="space-y-2">
+        {% for m in members %}
+        <div class="player-chip {% if m.role == 'host' %}host{% endif %}">
+          <div class="w-8 h-8 flex items-center justify-center rounded-sm border border-[var(--mp-brass-dim)] bg-[var(--mp-surface-3)] mp-display text-[15px]" style="color: var(--mp-brass);">{{ m.username[0]|upper }}</div>
+          <div class="flex-1">
+            <div class="mp-display text-[15px]">@{{ m.username }} {% if m.is_you %}<span class="text-[10px] mp-mono uppercase tracking-[0.15em] text-[var(--mp-ink-faint)]">you</span>{% endif %}</div>
+            <div class="text-[11px] text-[var(--mp-ink-faint)] mp-mono">elo {{ m.elo }} · {{ m.role }}</div>
+          </div>
+        </div>
+        {% endfor %}
+        {% if members|length < 2 %}
+        <div class="text-[13px] text-[var(--mp-ink-faint)] italic text-center py-3">waiting for another player…</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if lobby.is_private %}
+    <div class="mp-panel rounded-sm p-5 mb-5">
+      <div class="mp-eyebrow mb-1" style="color: var(--mp-brass);">Invite code</div>
+      <div class="mp-display text-[26px] tracking-[0.3em] mp-mono">{{ lobby.code }}</div>
+      <div class="text-[11px] text-[var(--mp-ink-faint)] mt-2">
+        Share this code or the URL <span class="mp-mono">/lobby/join?code={{ lobby.code }}</span>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if members|length == 2 %}
+    <div class="mp-panel rounded-sm p-5 text-center">
+      <div class="mp-display italic text-[17px]" style="color: var(--mp-ink-muted);">
+        Both seats filled. Setting up the board…
+      </div>
+      <div class="text-[11px] mp-mono uppercase tracking-[0.15em] text-[var(--mp-ink-faint)] mt-2">
+        colors drawn randomly
+      </div>
+    </div>
+    {% endif %}
+  </main>
+</div>
+
+<script>
+  const LOBBY_ID = {{ lobby.id | tojson }};
+  const IS_HOST = {{ 'true' if is_host else 'false' }};
+
+  async function postControls(patch) {
+    const data = new FormData();
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === undefined) continue;
+      data.append(k, String(v));
+    }
+    const r = await fetch(`/lobby/${LOBBY_ID}/controls`, { method: 'POST', body: data });
+    if (!r.ok) {
+      console.warn('controls rejected', await r.text());
+      return null;
+    }
+    return r.json();
+  }
+
+  function setDoorVisual(isPublic) {
+    const door = document.getElementById('door');
+    door.dataset.open = isPublic ? 'true' : 'false';
+    const label = document.getElementById('door-state-label');
+    label.textContent = isPublic ? 'Open — public' : 'Closed — private';
+    label.style.color = isPublic ? 'var(--mp-felt-bright)' : 'var(--mp-oxblood)';
+  }
+
+  function setLockVisual(allow) {
+    const lock = document.getElementById('lock');
+    lock.dataset.open = allow ? 'true' : 'false';
+    document.getElementById('lock-glyph').textContent = allow ? '⚿' : '🔒';
+    document.getElementById('lock-state-label').textContent =
+      allow ? 'unlocked — watchers welcome' : 'locked — no watchers';
+  }
+
+  function setRadioVisual(track) {
+    document.getElementById('radio-now').textContent = track || '— off —';
+    for (const btn of document.querySelectorAll('.radio-station')) {
+      btn.classList.toggle('active', (btn.dataset.track || '') === (track || ''));
+    }
+  }
+
+  function setLampVisual(brightness, hue) {
+    const lamp = document.getElementById('lamp');
+    lamp.style.setProperty('--lamp-color', hue);
+    lamp.style.opacity = String(0.4 + 0.6 * brightness);
+  }
+
+  const CLOCK_PRESETS = ["untimed", "5+0", "10+0", "15+10"];
+  function setClockVisual(tc) {
+    document.getElementById('clock-value').textContent = tc || 'untimed';
+  }
+
+  if (IS_HOST) {
+    document.getElementById('door').addEventListener('click', async () => {
+      const open = document.getElementById('door').dataset.open === 'true';
+      const result = await postControls({ is_private: !open });  // door open ↔ is_private false
+      if (result) setDoorVisual(!result.is_private);
+    });
+
+    document.getElementById('lock').addEventListener('click', async () => {
+      const open = document.getElementById('lock').dataset.open === 'true';
+      const result = await postControls({ allow_spectators: !open });
+      if (result) setLockVisual(result.allow_spectators);
+    });
+
+    for (const btn of document.querySelectorAll('.radio-station')) {
+      btn.addEventListener('click', async () => {
+        const result = await postControls({ music_track: btn.dataset.track || '' });
+        if (result) setRadioVisual(result.music_track);
+      });
+    }
+
+    document.getElementById('clock').addEventListener('click', async () => {
+      const cur = document.getElementById('clock-value').textContent.trim();
+      const next = CLOCK_PRESETS[(CLOCK_PRESETS.indexOf(cur) + 1) % CLOCK_PRESETS.length];
+      const result = await postControls({ time_control: next });
+      if (result) setClockVisual(result.time_control);
+    });
+
+    let volTimer = null;
+    document.getElementById('music-volume').addEventListener('input', (ev) => {
+      clearTimeout(volTimer);
+      const v = parseFloat(ev.target.value);
+      volTimer = setTimeout(() => postControls({ music_volume: v }), 150);
+    });
+
+    let brTimer = null;
+    const brEl = document.getElementById('lights-brightness');
+    brEl.addEventListener('input', (ev) => {
+      const v = parseFloat(ev.target.value);
+      setLampVisual(v, document.getElementById('lights-hue').value);
+      clearTimeout(brTimer);
+      brTimer = setTimeout(() => postControls({ lights_brightness: v }), 180);
+    });
+    const hueEl = document.getElementById('lights-hue');
+    hueEl.addEventListener('change', async (ev) => {
+      const hue = ev.target.value;
+      const br = parseFloat(brEl.value);
+      setLampVisual(br, hue);
+      await postControls({ lights_hue: hue });
+    });
+  }
+
+  // Poll for lobby state so guests see the host's changes.
+  async function pollLobbyState() {
+    try {
+      const r = await fetch(`/lobby/${LOBBY_ID}/state`, { headers: { Accept: 'application/json' } });
+      if (!r.ok) return;
+      const s = await r.json();
+      setDoorVisual(!s.is_private);
+      setLockVisual(s.allow_spectators);
+      setRadioVisual(s.music_track);
+      setLampVisual(s.lights_brightness, s.lights_hue);
+      setClockVisual(s.time_control);
+      if (s.status === 'in_match' && s.current_match_id) {
+        window.location.href = `/pvp/${s.current_match_id}`;
+      }
+      if (s.status === 'closed') {
+        window.location.href = '/lobbies?flash=lobby_closed';
+      }
+    } catch (_) { /* network blips happen */ }
+  }
+  setInterval(pollLobbyState, 2500);
+</script>
+{% endblock %}
