@@ -13,6 +13,9 @@
  */
 (function () {
   "use strict";
+  // Synth ambient pad disabled for the demo.
+  return;
+
   const MUTED_KEY = "mp_ambient_muted";
   const VOL_KEY = "mp_ambient_volume";
   const BASE_VOL = 0.28;

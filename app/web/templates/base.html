@@ -392,13 +392,16 @@
         <span class="mp-display text-[19px] tracking-tight">Metropolis <span class="mp-italic text-[var(--mp-ink-muted)]">Chess Club</span></span>
       </a>
       <nav class="text-[13px] text-[var(--mp-ink-muted)] space-x-5 flex items-center">
-        {% if room and room.ambient_track %}
+        {# Ambient audio disabled for the demo — toggle hidden. #}
+        {% if false %}
         <button id="mp-ambient-toggle" class="mp-ambient-toggle" data-muted="true" aria-pressed="false" aria-label="Toggle room audio">
           <span aria-hidden="true">♪̸</span>
         </button>
         {% endif %}
         {% if player %}
         <a href="/" class="hover:text-[var(--mp-ink)] transition">Characters</a>
+        <a href="/lobbies" class="hover:text-[var(--mp-ink)] transition">Lobbies</a>
+        <a href="/matchmaking" class="hover:text-[var(--mp-ink)] transition">Matchmaking</a>
         <a href="/discovery" class="hover:text-[var(--mp-ink)] transition">Discovery</a>
         <a href="/leaderboard/characters" class="hover:text-[var(--mp-ink)] transition">Leaderboard</a>
         <a href="/characters/new" class="mp-btn mp-btn-brass">+ New character</a>
@@ -410,6 +413,7 @@
           </div>
         </details>
         {% else %}
+        <a href="/signup" class="hover:text-[var(--mp-ink)] transition">Sign up</a>
         <a href="/login" class="mp-btn mp-btn-brass">Log in</a>
         {% endif %}
       </nav>
@@ -426,6 +430,7 @@
         {% elif fkey == 'welcome_back' %}Welcome back, @{{ fuser }}.
         {% elif fkey == 'renamed' %}Your guest account has been renamed to @{{ fuser }}.
         {% elif fkey == 'saved' %}Settings saved.
+        {% elif fkey == 'needs_password' %}Signed in, @{{ fuser }}. Set a password in <a href="/settings" class="underline">settings</a> so you can log in from another device.
         {% else %}{{ fkey }}
         {% endif %}
       </div>
@@ -442,9 +447,17 @@
     <div class="mp-eyebrow">Metropolis Chess Club · est. 2026</div>
   </footer>
 
+  {# Ambient audio:
+     - If a recorded room track exists, play it via ambient.js.
+     - Otherwise fall back to a browser-generated synth pad keyed on
+       body[data-theme]. Either way the mute toggle in the header works.
+  #}
   {% if room and room.ambient_track %}
   <audio id="mp-ambient" src="{{ room.ambient_track }}" loop preload="auto"></audio>
   <script src="/static/js/ambient.js" defer></script>
+  {% else %}
+  <script src="/static/js/synth_ambient.js" defer></script>
   {% endif %}
+  <script src="/static/js/sfx.js" defer></script>
 </body>
 </html>

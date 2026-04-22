@@ -3,6 +3,7 @@
 {% block title %}Room {{ lobby.code }} — Metropolis Chess Club{% endblock %}
 
 {% block head_extra %}
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <style>
   /* Phase 4.2e — interactive room controls. The door, lock, radio, and
      lamp are meant to feel like real things you touch, not a settings
@@ -148,6 +149,11 @@
 
 {% block content %}
 
+{# Tag the body for lobby_ambient.js to pick up. Using a setter script
+   instead of {% block body_attrs %} avoids touching base.html. #}
+<script>document.body.dataset.mpLobbyId = {{ lobby.id | tojson }};</script>
+<script src="/static/js/lobby_ambient.js" defer></script>
+
 <div class="mb-6 mp-enter mp-enter-1 flex items-center justify-between">
   <div>
     <div class="mp-eyebrow">Room {{ lobby.code }} · {% if is_host %}yours{% else %}guesting{% endif %}</div>
@@ -210,7 +216,8 @@
       {% endif %}
     </div>
 
-    {# Radio #}
+    {# Radio removed for the demo — ambient audio is off. #}
+    {% if false %}
     <div class="radio">
       <div class="flex items-center justify-between">
         <div class="mp-eyebrow" style="color: var(--mp-brass-bright);">Radio</div>
@@ -231,6 +238,7 @@
         <input id="music-volume" type="range" min="0" max="1" step="0.05" value="{{ lobby.music_volume }}" />
       </div>
     </div>
+    {% endif %}
 
     {# Tabletop clock #}
     <div class="mp-room-wall flex items-center gap-4">
@@ -345,7 +353,10 @@
   }
 
   function setRadioVisual(track) {
-    document.getElementById('radio-now').textContent = track || '— off —';
+    // Radio removed for the demo; no DOM to update.
+    const el = document.getElementById('radio-now');
+    if (!el) return;
+    el.textContent = track || '— off —';
     for (const btn of document.querySelectorAll('.radio-station')) {
       btn.classList.toggle('active', (btn.dataset.track || '') === (track || ''));
     }
@@ -366,19 +377,28 @@
     document.getElementById('door').addEventListener('click', async () => {
       const open = document.getElementById('door').dataset.open === 'true';
       const result = await postControls({ is_private: !open });  // door open ↔ is_private false
-      if (result) setDoorVisual(!result.is_private);
+      if (result) {
+        setDoorVisual(!result.is_private);
+        window.MpSfx && MpSfx.play(result.is_private ? 'door_close' : 'door_open');
+      }
     });
 
     document.getElementById('lock').addEventListener('click', async () => {
       const open = document.getElementById('lock').dataset.open === 'true';
       const result = await postControls({ allow_spectators: !open });
-      if (result) setLockVisual(result.allow_spectators);
+      if (result) {
+        setLockVisual(result.allow_spectators);
+        window.MpSfx && MpSfx.play(result.allow_spectators ? 'lock' : 'lock_heavy');
+      }
     });
 
     for (const btn of document.querySelectorAll('.radio-station')) {
       btn.addEventListener('click', async () => {
         const result = await postControls({ music_track: btn.dataset.track || '' });
-        if (result) setRadioVisual(result.music_track);
+        if (result) {
+          setRadioVisual(result.music_track);
+          window.MpSfx && MpSfx.play('radio_click');
+        }
       });
     }
 
@@ -386,15 +406,21 @@
       const cur = document.getElementById('clock-value').textContent.trim();
       const next = CLOCK_PRESETS[(CLOCK_PRESETS.indexOf(cur) + 1) % CLOCK_PRESETS.length];
       const result = await postControls({ time_control: next });
-      if (result) setClockVisual(result.time_control);
+      if (result) {
+        setClockVisual(result.time_control);
+        window.MpSfx && MpSfx.play('click');
+      }
     });
 
-    let volTimer = null;
-    document.getElementById('music-volume').addEventListener('input', (ev) => {
-      clearTimeout(volTimer);
-      const v = parseFloat(ev.target.value);
-      volTimer = setTimeout(() => postControls({ music_volume: v }), 150);
-    });
+    const volEl = document.getElementById('music-volume');
+    if (volEl) {
+      let volTimer = null;
+      volEl.addEventListener('input', (ev) => {
+        clearTimeout(volTimer);
+        const v = parseFloat(ev.target.value);
+        volTimer = setTimeout(() => postControls({ music_volume: v }), 150);
+      });
+    }
 
     let brTimer = null;
     const brEl = document.getElementById('lights-brightness');
@@ -413,25 +439,50 @@
     });
   }
 
-  // Poll for lobby state so guests see the host's changes.
+  // --- Phase 4.4 — live lobby via Socket.IO /lobby namespace ------------
+  // Replaces the 2.5s HTTP poll. Controls + seat + match-started arrive
+  // instantly. HTTP polling kept as a 10s safety net so a brief socket
+  // hiccup doesn't leave the atmosphere frozen.
+  function applyLobby(s) {
+    setDoorVisual(!s.is_private);
+    setLockVisual(s.allow_spectators);
+    setRadioVisual(s.music_track);
+    setLampVisual(s.lights_brightness, s.lights_hue);
+    setClockVisual(s.time_control);
+    if (s.status === 'in_match' && s.current_match_id) {
+      window.location.href = `/pvp/${s.current_match_id}`;
+    } else if (s.status === 'closed') {
+      window.location.href = '/lobbies?flash=lobby_closed';
+    }
+  }
+
+  function connectLobbySocket() {
+    if (!window.io) return false;
+    const sock = io('/lobby', { query: { lobby_id: LOBBY_ID }, transports: ['websocket', 'polling'] });
+    sock.on('lobby_state', (p) => { if (p && p.lobby) applyLobby(p.lobby); });
+    sock.on('controls_changed', (p) => { if (p) applyLobby(p); });
+    sock.on('match_started', (p) => {
+      if (p && p.match_id) window.location.href = `/pvp/${p.match_id}`;
+    });
+    sock.on('lobby_closed', () => { window.location.href = '/lobbies?flash=lobby_closed'; });
+    sock.on('seat_changed', () => {
+      // Simplest: reload so the server-rendered roster is fresh. A
+      // smoother DOM patch is a Phase 4.5 polish job.
+      window.location.reload();
+    });
+    sock.on('connect_error', (err) => console.warn('[lobby-sock] connect error:', err.message));
+    return true;
+  }
+
   async function pollLobbyState() {
     try {
       const r = await fetch(`/lobby/${LOBBY_ID}/state`, { headers: { Accept: 'application/json' } });
-      if (!r.ok) return;
-      const s = await r.json();
-      setDoorVisual(!s.is_private);
-      setLockVisual(s.allow_spectators);
-      setRadioVisual(s.music_track);
-      setLampVisual(s.lights_brightness, s.lights_hue);
-      setClockVisual(s.time_control);
-      if (s.status === 'in_match' && s.current_match_id) {
-        window.location.href = `/pvp/${s.current_match_id}`;
-      }
-      if (s.status === 'closed') {
-        window.location.href = '/lobbies?flash=lobby_closed';
-      }
-    } catch (_) { /* network blips happen */ }
+      if (r.ok) applyLobby(await r.json());
+    } catch (_) {}
   }
-  setInterval(pollLobbyState, 2500);
+
+  const connected = connectLobbySocket();
+  // Safety-net poll — much slower than before since socket is primary.
+  setInterval(pollLobbyState, connected ? 15000 : 2500);
 </script>
 {% endblock %}
