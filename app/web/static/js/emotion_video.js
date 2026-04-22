@@ -68,11 +68,18 @@
     probeVideo.src = url;
   }
 
+  // Monotonic version counter. probeNeutral and loadHistory often call
+  // setEmotion within the same tick; without this, two play() handlers
+  // race on the same <video> element, both fire on canplaythrough, and
+  // the second pauses the now-visible element on a dark frame.
+  let setVersion = 0;
+
   function setEmotion(emotion, intensity) {
     if (emotion === currentEmotion) return;
     const url = resolveUrl(emotion);
     if (!url) return;
 
+    const myVersion = ++setVersion;
     const nextEl = currentEl === a ? b : a;
     nextEl.src = url;
     nextEl.style.opacity = "0";
@@ -80,13 +87,18 @@
     nextEl.load();
 
     const play = () => {
+      // Stale: a newer setEmotion has superseded us. Don't touch opacity
+      // or pause anything — let the latest call drive the swap.
+      if (myVersion !== setVersion) return;
       nextEl.play().catch(() => {});
       // Swap visible element.
       requestAnimationFrame(() => {
+        if (myVersion !== setVersion) return;
         nextEl.style.opacity = "1";
         currentEl.style.opacity = "0";
       });
       setTimeout(() => {
+        if (myVersion !== setVersion) return;
         currentEl.pause();
         currentEl = nextEl;
         currentEmotion = emotion;
@@ -95,6 +107,7 @@
     nextEl.addEventListener("canplaythrough", play, { once: true });
     // Fallback: if canplaythrough never fires, show after a timeout.
     setTimeout(() => {
+      if (myVersion !== setVersion) return;
       if (nextEl.readyState >= 2 && currentEl !== nextEl) play();
     }, 800);
   }
