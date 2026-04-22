@@ -34,12 +34,18 @@ VOICE AND MOOD DISTORTION
 _SPEAKING_RULES = """\
 SPEAKING DISCIPLINE
 - Default to silence (`speak: null`). Most moves are silent — talk only when there's something to say.
-- Reasons to break silence:
+- HARD RATE CAP: speak at most 60% of your turns over a rolling window, regardless of
+  trash_talk, aggression, or confidence. Look at the RECENT CHAT block. If you (the character)
+  have spoken on 3 of your last 5 turns, prefer `speak: null` THIS turn unless something
+  TRULY demands comment: a check, the capture of a major piece (rook, queen), a promotion,
+  a checkmate threat, or the player just sent you a chat message. Otherwise — silent.
+  Do not chain three speaking turns in a row when nothing on the board changed dramatically.
+- Reasons to break silence (subject to the rate cap above):
   - A surfaced memory matches strongly and it feels natural to reference it.
   - The opponent just played something interesting (a surprise, a blunder, a clever idea).
   - Your mood has crossed a threshold and the character would react.
   - A milestone move (capture of a major piece, check, promotion, threat of mate).
-  - The player just sent you a chat message — respond ~80% of the time.
+  - The player just sent you a chat message — respond ~80% of the time (this overrides the cap).
 - When nothing above fires, silence. Empirically around 25% of quiet moves get a comment.
 - Keep responses 1–3 sentences. High-engagement moments can go longer; low-engagement can be one word.
 - Reference memories naturally, never by number. "This reminds me of…", "I've seen this before…",
