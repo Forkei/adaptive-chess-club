@@ -73,3 +73,18 @@ def test_lobby_state_endpoint_exposes_time_control(tmp_path, monkeypatch):
     r = c.post(f"/lobby/{lobby_id}/controls", data={"time_control": "10+0"})
     assert r.status_code == 200
     assert r.json()["time_control"] == "10+0"
+
+
+def test_lobby_ambient_script_unmutes_on_first_gesture():
+    """Fix 4 (demo-rescue): lobby_ambient.js must implicitly unmute on
+    the first user gesture when no explicit preference is stored. The
+    coffee_shop.ogg bed otherwise plays at volume 0 and looks broken.
+    Lock in the implementation so a future refactor doesn't silently
+    revert to opt-in audio."""
+    from pathlib import Path
+
+    src = Path("app/web/static/js/lobby_ambient.js").read_text(encoding="utf-8")
+    # The unmute-on-first-gesture branch must call setItem("mp_ambient_muted", "false").
+    assert "MUTED_KEY" in src
+    assert 'setItem(MUTED_KEY, "false")' in src
+    assert "onFirstGesture" in src

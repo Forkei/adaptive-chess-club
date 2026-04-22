@@ -66,7 +66,11 @@
 
   // One-shot: on first user gesture anywhere, (re)try starting playback so
   // browsers that blocked initial autoplay pick up once the user interacts.
+  // Fix 4 (demo-rescue): if the user has no stored mute preference, also
+  // implicitly unmute — otherwise the audio plays silently and looks
+  // broken. A click on ♪̸ still wins since it sets the localStorage key.
   function onFirstGesture() {
+    if (localStorage.getItem(MUTED_KEY) === null) setMuted(false);
     startPlaying();
     window.removeEventListener("pointerdown", onFirstGesture, true);
     window.removeEventListener("keydown", onFirstGesture, true);
