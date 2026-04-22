@@ -320,3 +320,84 @@ def test_chat_route_hand_off_plays_opening_when_character_white(monkeypatch):
             "character is white but no opening move was committed; "
             "chat hand-off is missing session.commit()"
         )
+
+
+def test_pre_match_chat_seeds_table_talk_on_match_page(monkeypatch):
+    """Regression (demo-rescue Fix 3): after a chat hand-off, the match
+    page must ship the pre-match transcript to the browser so play.html
+    can seed the chat log. The conversation should not visually reset."""
+    import app.matches.service as match_service_mod
+    from app.engine.registry import reset_engines_for_testing
+    from app.main import create_app
+    from app.models.match import Color
+    from app.redis_client import reset_memory_store_for_testing
+    from fastapi.testclient import TestClient
+    from tests.conftest import signup_and_login
+
+    reset_engines_for_testing()
+    reset_memory_store_for_testing()
+    # Pin player to WHITE so character = BLACK → no opening engine move
+    # to worry about; this test focuses on the chat transcript only.
+    monkeypatch.setattr(
+        match_service_mod.random, "choice", lambda _opts: Color.WHITE
+    )
+    monkeypatch.setattr(
+        "app.matches.service.available_engines", lambda: ["mock"]
+    )
+
+    async def _noop_async(*a, **kw):
+        return None
+
+    def _sync_noop(*a, **kw):
+        return None
+
+    monkeypatch.setattr(match_service_mod, "_run_agents_sync", _sync_noop)
+
+    client = TestClient(create_app(), follow_redirects=False)
+    signup_and_login(client, "premchat_user")
+
+    with SessionLocal() as s:
+        char = _mk_character(s)
+        char_id = char.id
+
+    # Turn 1: player chats, character greets (no game yet).
+    with patch(
+        "app.characters.chat_service.run_soul",
+        return_value=_soul_says("nice to see you"),
+    ), patch(
+        "app.characters.chat_service.run_subconscious", return_value=[],
+    ):
+        r = client.post(
+            f"/characters/{char_id}/chat", data={"text": "hey there"},
+        )
+    assert r.status_code == 200, r.text
+
+    # Turn 2: player asks to play, Soul emits start_game → hand-off.
+    with patch(
+        "app.characters.chat_service.run_soul",
+        return_value=_soul_says(
+            "let's go", game_action="start_game",
+        ),
+    ), patch(
+        "app.characters.chat_service.run_subconscious", return_value=[],
+    ):
+        r = client.post(
+            f"/characters/{char_id}/chat", data={"text": "let's play"},
+        )
+    assert r.status_code == 200, r.text
+    match_id = r.json()["handed_off_match_id"]
+    assert match_id is not None
+
+    # The board page must ship the transcript to the browser so play.html
+    # can seed the chat log from PRE_MATCH_CHAT.
+    r = client.get(f"/matches/{match_id}")
+    assert r.status_code == 200, r.text
+    assert "const PRE_MATCH_CHAT" in r.text
+    assert "PRE_MATCH_CHAT = []" not in r.text
+    # Both player and character lines must be in the serialized JS array.
+    # Jinja's | tojson unicode-escapes apostrophes as \u0027, so match the
+    # apostrophe-free turns directly.
+    assert "hey there" in r.text
+    assert "nice to see you" in r.text
+    # Apostrophe-escaped turn: "let's go" → "let\u0027s go" in JSON.
+    assert "let" in r.text and "s go" in r.text
