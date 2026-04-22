@@ -8,6 +8,7 @@ is already large. All routes are under `/lobby/*`, `/lobbies`,
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -41,8 +42,9 @@ from app.lobbies.service import (
     list_public_open_lobbies,
     update_controls,
 )
-from app.models.lobby import Lobby, LobbyStatus, PvpMatchStatus
+from app.models.lobby import Lobby, LobbyStatus, PvpMatch, PvpMatchStatus
 from app.models.match import Player
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,35 @@ _TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
 router = APIRouter(tags=["lobby"])
+
+
+def _active_pvp_match_for_lobby(session: Session, lobby_id: str) -> PvpMatch | None:
+    """Return the lobby's currently-running PvP match, or None.
+
+    Used to route a third user holding the invite code into the spectator
+    view of an in-progress game when the lobby's two seats are taken and
+    spectators are allowed.
+    """
+    return session.execute(
+        select(PvpMatch)
+        .where(
+            PvpMatch.lobby_id == lobby_id,
+            PvpMatch.status == PvpMatchStatus.IN_PROGRESS,
+        )
+        .order_by(PvpMatch.started_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _broadcast_seats(session: Session, lob: Lobby) -> None:
+    """Push current active roster to any lobby-socket watcher. Best-effort."""
+    try:
+        from app.sockets.lobby_server import broadcast_seat_changed, _serialize_members
+
+        members = _serialize_members(session, lob.id)
+        broadcast_seat_changed(lob, members=members)
+    except Exception:
+        logger.exception("lobby socket seat broadcast failed (non-fatal)")
 
 
 def _lobby_view_context(session: Session, lobby, *, player: Player) -> dict:
@@ -176,9 +207,23 @@ def lobby_join_submit(
     except LobbyNotFound:
         return RedirectResponse(url=f"/lobby/join?code={code}&error=not_found", status_code=303)
     except LobbyFull:
+        # Spectator fallback: if both seats are taken but the lobby permits
+        # spectators, route the code-holder to the active match's read-only
+        # board instead of bouncing them with "Room is full". The pvp_play
+        # page already gates the read-only view on lobby.allow_spectators,
+        # so we just need to send them there.
+        try:
+            lob = get_lobby_by_code(session, code)
+        except LobbyNotFound:
+            return RedirectResponse(url=f"/lobby/join?code={code}&error=not_found", status_code=303)
+        if lob.allow_spectators:
+            match = _active_pvp_match_for_lobby(session, lob.id)
+            if match is not None:
+                return RedirectResponse(url=f"/pvp/{match.id}", status_code=303)
         return RedirectResponse(url=f"/lobby/join?code={code}&error=full", status_code=303)
     except LobbyClosed:
         return RedirectResponse(url=f"/lobby/join?code={code}&error=closed", status_code=303)
+    _broadcast_seats(session, lob)
     return RedirectResponse(url=f"/lobby/{lob.id}", status_code=303)
 
 
@@ -204,12 +249,25 @@ def lobby_room(
     if not seated:
         if lob.status == LobbyStatus.CLOSED:
             raise HTTPException(status_code=404, detail="Lobby has been closed")
+        # Spectator fast-path: lobby is mid-match and permits spectators.
+        # Skip the "auto-seat" attempt entirely (it would raise LobbyFull)
+        # and bounce straight to the read-only board view.
+        if lob.status == LobbyStatus.IN_MATCH and lob.allow_spectators:
+            match = _active_pvp_match_for_lobby(session, lob.id)
+            if match is not None:
+                return RedirectResponse(url=f"/pvp/{match.id}", status_code=303)
         if lob.is_private:
             return RedirectResponse(url="/lobby/join?error=private", status_code=303)
-        # Auto-seat on a public lobby visit. Failure (full) redirects.
+        # Auto-seat on a public lobby visit. Failure (full) → spectate
+        # if allowed, otherwise the original "lobby is full" bounce.
         try:
             join_lobby(session, lob, player)
+            _broadcast_seats(session, lob)
         except LobbyFull:
+            if lob.allow_spectators:
+                match = _active_pvp_match_for_lobby(session, lob.id)
+                if match is not None:
+                    return RedirectResponse(url=f"/pvp/{match.id}", status_code=303)
             return RedirectResponse(url="/lobbies?error=full", status_code=303)
 
     # Phase 4.2.5 — zero-button auto-start: if both seats are filled and
@@ -226,6 +284,12 @@ def lobby_room(
             host = session.get(Player, lob.host_id)
             if host is not None:
                 match = pvp.start_match(session, lob, by=host, white_choice="random")
+                try:
+                    from app.sockets.lobby_server import broadcast_match_started
+
+                    broadcast_match_started(lob, match_id=match.id)
+                except Exception:
+                    logger.exception("lobby socket auto-start broadcast failed (non-fatal)")
                 return RedirectResponse(url=f"/pvp/{match.id}", status_code=303)
         except Exception:
             logger.exception("auto-start failed for lobby %s", lob.id)
@@ -250,6 +314,7 @@ def lobby_leave(
     except LobbyNotFound:
         return RedirectResponse(url="/lobbies", status_code=303)
     leave_lobby(session, lob, player)
+    _broadcast_seats(session, lob)
     return RedirectResponse(url="/lobbies", status_code=303)
 
 
@@ -333,14 +398,13 @@ def lobby_controls(
         return JSONResponse({"error": exc.code, "message": str(exc)}, status_code=400)
     except LobbyClosed:
         return JSONResponse({"error": "closed"}, status_code=409)
-    # Broadcast via socket layer (Phase 4.2g) — importing here to avoid
-    # a module-level cycle; absence is tolerated for test isolation.
+    # Broadcast via socket layer. Absence tolerated for test isolation.
     try:
-        from app.sockets.lobby_server import broadcast_controls_update  # type: ignore
+        from app.sockets.lobby_server import broadcast_controls_update
 
         broadcast_controls_update(lob)
     except Exception:
-        pass
+        logger.exception("lobby socket controls broadcast failed (non-fatal)")
     return JSONResponse({
         "is_private": lob.is_private,
         "allow_spectators": lob.allow_spectators,
@@ -369,6 +433,12 @@ def lobby_start_match(
         return RedirectResponse(url=f"/lobby/{lobby_id}?error=not_host", status_code=303)
     except LobbyError as exc:
         return RedirectResponse(url=f"/lobby/{lobby_id}?error={exc.code}", status_code=303)
+    try:
+        from app.sockets.lobby_server import broadcast_match_started
+
+        broadcast_match_started(lob, match_id=match.id)
+    except Exception:
+        logger.exception("lobby socket match_started broadcast failed (non-fatal)")
     return RedirectResponse(url=f"/pvp/{match.id}", status_code=303)
 
 
@@ -456,6 +526,17 @@ def pvp_state(
         "current_fen": match.current_fen,
         "moves": match.moves,
         "move_count": match.move_count,
+        "clocks": {
+            "time_control": match.time_control,
+            "increment_ms": match.increment_ms,
+            "white_ms": match.white_clock_ms,
+            "black_ms": match.black_clock_ms,
+            # Server instant at which the side-to-move's timer started
+            # running. Client subtracts (now - last_tick_at) to render a
+            # smoothly-counting-down clock between polls.
+            "last_tick_at": match.last_tick_at.isoformat() + "Z" if match.last_tick_at else None,
+            "server_now": datetime.utcnow().isoformat() + "Z",
+        },
     })
 
 
