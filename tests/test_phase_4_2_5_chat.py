@@ -245,3 +245,78 @@ def test_opponent_notes_forwarded_into_match_extra_state():
         notes = (match.extra_state or {}).get("pending_opponent_notes") or []
         assert "opens with chitchat; seems nervous" in notes
         assert match.extra_state.get("pre_match_chat_session_id") == sess.id
+
+
+def test_chat_route_hand_off_plays_opening_when_character_white(monkeypatch):
+    """Regression (demo-rescue Fix 1): when Soul emits start_game and the
+    character is white, the chat route must commit the engine opening move
+    so a subsequent session (the board page) sees move_count == 1.
+
+    Before the fix, the route awaited ``start_match_play`` but never
+    committed; ``_persist_move`` only flushes, so the move vanished when
+    the request-scoped session closed.
+    """
+    import app.matches.service as match_service_mod
+    from app.engine.registry import reset_engines_for_testing
+    from app.main import create_app
+    from app.models.match import Color, Match
+    from app.redis_client import reset_memory_store_for_testing
+    from fastapi.testclient import TestClient
+    from tests.conftest import signup_and_login
+
+    reset_engines_for_testing()
+    reset_memory_store_for_testing()
+
+    # Force character to white by pinning the "random" side to WHITE for
+    # the player → so character plays black — wait, invert: player=BLACK
+    # means character=WHITE. Pin random.choice to Color.BLACK.
+    monkeypatch.setattr(
+        match_service_mod.random, "choice", lambda _opts: Color.BLACK
+    )
+    # Force MockEngine so the test doesn't need Maia/Stockfish binaries.
+    monkeypatch.setattr(
+        "app.matches.service.available_engines", lambda: ["mock"]
+    )
+
+    # Stub out the post-move agent pipeline (Soul/Subconscious/emotion).
+    async def _noop_async(*a, **kw):
+        return None
+
+    def _sync_noop(*a, **kw):
+        return None
+
+    monkeypatch.setattr(match_service_mod, "_run_agents_sync", _sync_noop)
+
+    client = TestClient(create_app(), follow_redirects=False)
+    signup_and_login(client, "handoff_user")
+
+    with SessionLocal() as s:
+        char = _mk_character(s)
+        char_id = char.id
+
+    soul_resp = _soul_says(
+        "sit down", emotion="focused", intensity=0.6, game_action="start_game",
+    )
+    with patch(
+        "app.characters.chat_service.run_soul", return_value=soul_resp,
+    ), patch(
+        "app.characters.chat_service.run_subconscious", return_value=[],
+    ):
+        r = client.post(
+            f"/characters/{char_id}/chat", data={"text": "let's go"},
+        )
+
+    assert r.status_code == 200, r.text
+    match_id = r.json()["handed_off_match_id"]
+    assert match_id is not None
+
+    # Fresh session: the engine move must have been committed, not merely
+    # flushed into the request-scoped session.
+    with SessionLocal() as s:
+        m = s.get(Match, match_id)
+        assert m is not None
+        assert m.player_color == Color.BLACK  # character = WHITE
+        assert m.move_count == 1, (
+            "character is white but no opening move was committed; "
+            "chat hand-off is missing session.commit()"
+        )

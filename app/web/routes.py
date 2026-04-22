@@ -876,6 +876,18 @@ def character_chat_history(
         raise HTTPException(status_code=403, detail="Content rating exceeds your preference.")
 
     chat_session = chat_get_or_create_session(session, character=character, player=player)
+
+    # Phase 4.4d — character opens first (sometimes). Fires only on a
+    # fresh, empty session; probabilistic so it doesn't feel scripted.
+    # Sync Soul call is already tolerated on the POST path; the GET adds
+    # at most one Soul round-trip on first room entry.
+    try:
+        from app.characters.chat_service import maybe_character_greets
+
+        maybe_character_greets(session, chat_session, character, player)
+    except Exception:
+        logger.exception("[chat] greeting hook failed (non-fatal)")
+
     turns = chat_get_turns(session, chat_session)
     return {
         "session_id": chat_session.id,
@@ -898,7 +910,7 @@ def character_chat_history(
 
 
 @router.post("/characters/{character_id}/chat")
-def character_chat_post(
+async def character_chat_post(
     character_id: str,
     text: str = Form(...),
     player: Player = Depends(require_player),
@@ -926,6 +938,31 @@ def character_chat_post(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    # If the Soul decided to start a game AND the character has white,
+    # play the opening move before redirecting — otherwise the board
+    # lands with "your move" when the player is black. Matches the
+    # behaviour of the /matches start path (start_match_html).
+    if result.handed_off_match_id:
+        from app.matches.service import get_match as get_pve_match
+        logger.info(
+            "[chat] hand-off detected match=%s; running opening engine turn",
+            result.handed_off_match_id,
+        )
+        try:
+            handed_match = get_pve_match(session, result.handed_off_match_id)
+            opening = await match_service.start_match_play(session, handed_match)
+            session.commit()
+            logger.info(
+                "[chat] hand-off opening move complete match=%s opening_move=%s",
+                result.handed_off_match_id, opening.san if opening else None,
+            )
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "[chat] hand-off opening move failed for match=%s (non-fatal)",
+                result.handed_off_match_id,
+            )
 
     ct = result.character_turn
     return {
@@ -1202,6 +1239,27 @@ def match_page(
     engines = available_engines()
     real_engines = [e for e in engines if e != "mock"]
 
+    # Pre-match chat continuity: when the match was handed off from a
+    # character chat session, pull the turns so play.html can seed the
+    # transcript with the conversation that led up to the game.
+    pre_match_chat: list[dict] = []
+    pre_session_id = (match.extra_state or {}).get("pre_match_chat_session_id")
+    if pre_session_id:
+        from app.models.chat import CharacterChatTurn, ChatTurnRole
+
+        rows = session.execute(
+            select(CharacterChatTurn)
+            .where(CharacterChatTurn.session_id == pre_session_id)
+            .order_by(CharacterChatTurn.turn_number.asc())
+        ).scalars().all()
+        for t in rows:
+            pre_match_chat.append({
+                "role": "player" if t.role == ChatTurnRole.PLAYER else "character",
+                "text": t.text,
+                "emotion": t.emotion,
+                "emotion_intensity": t.emotion_intensity,
+            })
+
     return templates.TemplateResponse(
         request,
         "play.html",
@@ -1213,6 +1271,7 @@ def match_page(
             "engines_available": engines,
             "has_real_engine": bool(real_engines),
             "room": theme_for_character(character),
+            "pre_match_chat": pre_match_chat,
         },
     )
 
