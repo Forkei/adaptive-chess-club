@@ -48,11 +48,19 @@ def test_viktor_has_full_emotion_clip_set():
         assert url.startswith("/static/characters/viktor_petrov/emotions/")
 
 
-def test_other_presets_have_no_clips_yet():
-    """Margot/Kenji/Archibald get themed rooms but no clips — they fall
-    back to the text-only emotion indicator."""
-    for r in (MARGOT_ROOM, KENJI_ROOM, ARCHIBALD_ROOM):
+def test_presets_without_assets_fall_back_to_empty_clips():
+    """Margot/Archibald still ship without emotion clips — the UI falls
+    back to the text-only emotion indicator. Kenji now has assets
+    (Phase 4.4d reel integration) so he's excluded from this check."""
+    for r in (MARGOT_ROOM, ARCHIBALD_ROOM):
         assert r.emotion_clips == {}
+
+
+def test_kenji_clips_cover_all_emotions():
+    """Kenji's Phase 4.4d reel maps every Soul emotion to an MP4 URL."""
+    assert set(KENJI_ROOM.emotion_clips.keys()) == set(EMOTIONS)
+    for url in KENJI_ROOM.emotion_clips.values():
+        assert url.startswith("/static/characters/kenji_sato/emotions/")
 
 
 def test_css_vars_only_touch_mood_tokens():
@@ -124,9 +132,11 @@ def test_detail_page_includes_viktor_theme_vars():
     assert "--mp-brass: #C58147" in r.text
     # Room tagline present.
     assert "Above the bakery" in r.text
-    # Ambient audio element + toggle rendered (because room has an ambient track).
-    assert 'id="mp-ambient"' in r.text
+    # Phase 4.4c — ambient is now always available: either a recorded
+    # <audio id="mp-ambient"> track, or a synth fallback when no audio
+    # file is shipped with the room. The toggle is always present.
     assert 'id="mp-ambient-toggle"' in r.text
+    assert ('id="mp-ambient"' in r.text) or ("synth_ambient.js" in r.text)
 
 
 def test_detail_page_custom_character_has_no_theme_attrs():
@@ -173,3 +183,33 @@ def test_rooms_module_emotions_constant_matches_soul_schema():
     from typing import get_args
 
     assert set(EMOTIONS) == set(get_args(Emotion))
+
+
+def test_play_page_renders_emotion_stage_with_inline_src():
+    """Fix 2 (demo-rescue): play.html must render the emotion-stage div
+    with the neutral clip URL pre-populated in HTML so the stage isn't
+    blank on first paint. Without this, we depend on the JS probe
+    succeeding before the user gets a visual."""
+    from app.matches.service import create_match
+    from app.models.match import Match
+
+    c = _client()
+    signup_and_login(c, "play_emot_viewer")
+    # Kenji is rated family → no settings bump required.
+    cid = _seed_preset_character("kenji_sato")
+
+    with SessionLocal() as s:
+        player = s.query(Player).filter(Player.username == "play_emot_viewer").one()
+        match = create_match(
+            s, character_id=cid, player_id=player.id, player_color="white",
+        )
+        s.commit()
+        match_id = match.id
+
+    r = c.get(f"/matches/{match_id}")
+    assert r.status_code == 200, r.text
+    assert 'id="mp-emotion-stage"' in r.text
+    # Neutral clip path must be in the rendered HTML — that's what
+    # guarantees the stage shows a frame before JS runs.
+    assert "/static/characters/kenji_sato/emotions/neutral.mp4" in r.text
+    assert 'id="mp-emotion-a"' in r.text

@@ -109,7 +109,18 @@
     v.style.width = "100%";
     v.style.height = "100%";
     v.style.objectFit = "cover";
-    v.style.opacity = "0";
+    // Fix 2: if the template already rendered a <video src="..."> inline
+    // (so the stage isn't blank on first paint before MpEmotion boots),
+    // keep that element visible and mark it as the current element so the
+    // probe's crossfade picks the empty partner, not the already-playing one.
+    if (v.getAttribute("src")) {
+      v.style.opacity = "1";
+      currentEl = v;
+      currentEmotion = "neutral";
+      v.play().catch(() => {});
+    } else {
+      v.style.opacity = "0";
+    }
     v.style.transition = "opacity 420ms ease";
   });
   stage.style.position = stage.style.position || "relative";

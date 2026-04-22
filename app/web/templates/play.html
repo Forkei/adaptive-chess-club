@@ -8,6 +8,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
+<script src="/static/js/board_fx.js" defer></script>
 <script src="/static/js/emotion_video.js" defer></script>
 <style>
   /* Play-page-specific only — shared chat/conn/board styles live in base.html. */
@@ -113,7 +115,13 @@
   <div>
     {% if room and room.emotion_clips %}
     <div id="mp-emotion-stage" class="mp-emotion-stage" data-clips='{{ room.emotion_clips | tojson }}'>
-      <video id="mp-emotion-a" muted playsinline preload="auto" loop></video>
+      {# Fix 2: render the neutral clip directly in HTML so the stage
+         never sits blank waiting for the JS probe. emotion_video.js
+         crossfades to other clips via the second <video> tag when the
+         Soul emits a new emotion. #}
+      <video id="mp-emotion-a" src="{{ room.emotion_clips.get('neutral', '') }}"
+             autoplay muted playsinline preload="auto" loop
+             style="opacity: 1;"></video>
       <video id="mp-emotion-b" muted playsinline preload="auto" loop></video>
     </div>
     {% endif %}
@@ -195,6 +203,7 @@
   const INITIAL_FEN = {{ match.current_fen | tojson }};
   const INITIAL_STATUS = {{ match.status.value | tojson }};
   const INITIAL_MOVES = {{ moves_json | tojson }};
+  const PRE_MATCH_CHAT = {{ (pre_match_chat or []) | tojson }};
   const ENGINES_AVAILABLE = {{ engines_available | tojson }};
   const HAS_REAL_ENGINE = {{ has_real_engine | tojson }};
 
@@ -289,6 +298,56 @@
     onSnapEnd: () => board.position(game.fen()),
   });
 
+  // --- Phase 4.4b — ripple-in piece placement -----------------------------
+  // Runs once, at match load. Pieces fade from above with a tiny rotation
+  // and "place" down. Stagger is per-file (a→h), so the ripple sweeps
+  // left to right from the player's perspective. Flipped if the player
+  // is black, so the wave still comes from their own side.
+  function rippleInPieces() {
+    const FILES_LTR = PLAYER_COLOR === 'black' ? 'hgfedcba' : 'abcdefgh';
+    const STAGGER_MS = 55;   // per-file delay
+    const DURATION_MS = 520; // settle animation length
+    const pieces = Array.from(document.querySelectorAll('#board .piece-417db'));
+    if (!pieces.length) return;
+    for (const el of pieces) {
+      // chessboard.js v1 encodes the square name in the parent's
+      // data-square attribute (e.g. <div class="square-55d63" data-square="e2">).
+      const square = el.parentElement && el.parentElement.dataset
+        ? el.parentElement.dataset.square : null;
+      if (!square) continue;
+      const file = square[0];
+      const idx = FILES_LTR.indexOf(file);
+      const delay = idx >= 0 ? idx * STAGGER_MS : 0;
+      el.style.willChange = 'transform, opacity, filter';
+      el.style.transition = `transform ${DURATION_MS}ms cubic-bezier(.25,.8,.35,1.08) ${delay}ms, `
+                          + `opacity ${DURATION_MS}ms ease-out ${delay}ms, `
+                          + `filter ${DURATION_MS}ms ease-out ${delay}ms`;
+      el.style.transform = 'translateY(-18px) rotate(-2deg) scale(1.04)';
+      el.style.opacity = '0';
+      el.style.filter = 'blur(2px)';
+      // Next frame: animate to resting state.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        el.style.transform = 'translateY(0) rotate(0) scale(1)';
+        el.style.opacity = '1';
+        el.style.filter = 'blur(0)';
+      }));
+      // Clear inline styles after settle so chessboard.js can manage them again.
+      setTimeout(() => {
+        el.style.transition = '';
+        el.style.transform = '';
+        el.style.opacity = '';
+        el.style.filter = '';
+        el.style.willChange = '';
+      }, delay + DURATION_MS + 50);
+    }
+  }
+  // Fire once the DOM the board inserted is present. chessboard.js
+  // synchronously inserts markup, so one microtask is enough.
+  requestAnimationFrame(rippleInPieces);
+  // Warm up the SFX buffers we know we'll need so the first move
+  // doesn't have network latency tacked on.
+  if (window.MpSfx) MpSfx.preload(['piece_move', 'piece_capture', 'chime', 'bell']);
+
   function renderMoves(moves) {
     const ol = document.getElementById('move-list');
     ol.innerHTML = '';
@@ -328,6 +387,7 @@
                      <div class="text-sm mt-0.5">${escapeHtml(text)}</div>`;
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
+    if (window.MpBoardFx) MpBoardFx.slideBubble(div);
     return div;
   }
   function escapeHtml(s) {
@@ -372,6 +432,52 @@
     }
   }
 
+  // Pick the right click/thud for a move based on its SAN.
+  function playMoveSfx(san) {
+    if (!window.MpSfx) return;
+    san = san || '';
+    if (san.includes('#')) { MpSfx.play('bell'); return; }
+    if (san.includes('+')) { MpSfx.play('chime'); return; }
+    if (san.includes('x')) { MpSfx.play('piece_capture'); return; }
+    MpSfx.play('piece_move');
+  }
+
+  // Find the current king's square from the local game state (after the
+  // move that caused the check has been applied). Returns "e1" / "e8" etc.
+  function findKingSquare(colorChar) {
+    // colorChar: 'w' | 'b'. chess.js exposes .board() as rank-by-rank.
+    try {
+      const b = game.board();
+      for (let r = 0; r < 8; r++) {
+        for (let f = 0; f < 8; f++) {
+          const sq = b[r][f];
+          if (sq && sq.type === 'k' && sq.color === colorChar) {
+            const file = 'abcdefgh'[f];
+            const rank = 8 - r;
+            return file + rank;
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // Hook: whenever a move has been applied (by me or the engine), fire
+  // board-FX. `uci` is the move that just happened; `san` tells us whether
+  // the move gave check / checkmate.
+  function afterMoveFx(uci, san) {
+    if (!window.MpBoardFx) return;
+    if (uci) MpBoardFx.flashLastMove(uci);
+    if (san && (san.includes('+') || san.includes('#'))) {
+      // game.turn() is the side to move now = the side being checked.
+      const king = findKingSquare(game.turn());
+      if (king) MpBoardFx.pulseCheck(king);
+    }
+    if (san && san.includes('#')) {
+      MpBoardFx.shakeBoard();
+    }
+  }
+
   // --- Socket.IO ---------------------------------------------------------
 
   const socket = io('/play', {
@@ -412,7 +518,9 @@
   });
 
   socket.on('player_move_applied', (payload) => {
-    // No-op: we already moved the piece locally. Could use for reconciliation later.
+    // We already moved the piece locally; just play sfx + fx.
+    if (window.MpSfx) playMoveSfx(payload.san || '');
+    afterMoveFx(payload.uci, payload.san);
   });
 
   socket.on('agent_thinking', (payload) => {
@@ -422,6 +530,7 @@
 
   socket.on('memory_surfaced', (payload) => {
     showMemoryRibbon(payload.items || []);
+    if (window.MpSfx && (payload.items || []).length) MpSfx.play('chime', { volume: 0.6 });
   });
 
   socket.on('agent_move', (payload) => {
@@ -441,6 +550,8 @@
       time_taken_ms: payload.time_taken_ms, engine_name: payload.engine_name,
       eval_cp: payload.eval_cp,
     });
+    if (window.MpSfx) playMoveSfx(payload.san || '');
+    afterMoveFx(payload.uci, payload.san);
     awaitingAgent = false;
     setThinking(false);
     // Engine is done; Soul is now composing a reply (or deciding not to).
@@ -449,7 +560,10 @@
 
   socket.on('agent_chat', (payload) => {
     setComposing(false);
-    if (payload.speak) addChatBubble('agent', payload.speak);
+    if (payload.speak) {
+      addChatBubble('agent', payload.speak);
+      if (window.MpSfx) MpSfx.play('page_flip', { volume: 0.6 });
+    }
     setEmotion(payload.emotion, payload.emotion_intensity);
   });
 
@@ -469,6 +583,7 @@
   socket.on('match_ended', (payload) => {
     gameOver = true; awaitingAgent = false; setThinking(false);
     setStatusFinished(payload.result, payload.player_outcome, payload.reason);
+    if (window.MpSfx) MpSfx.play('bell', { volume: 0.9 });
     startPostMatchPanel();
   });
 
@@ -630,6 +745,20 @@
   // --- Init --------------------------------------------------------------
 
   renderMoves(INITIAL_MOVES);
+  // Phase 4.4b — pre-match chat carries over into the board view so the
+  // conversation doesn't visually restart when the game begins. A subtle
+  // divider marks where talking ended and the game began.
+  for (const t of (PRE_MATCH_CHAT || [])) {
+    addChatBubble(t.role === 'character' ? 'agent' : 'player', t.text);
+  }
+  if (PRE_MATCH_CHAT && PRE_MATCH_CHAT.length) {
+    const log = document.getElementById('chat-log');
+    const divider = document.createElement('div');
+    divider.className = 'text-[10px] uppercase tracking-[0.2em] text-center py-1 my-1';
+    divider.style.color = 'var(--mp-ink-faint)';
+    divider.textContent = '— game begins —';
+    log.appendChild(divider);
+  }
   seedChatLogFromMoves(INITIAL_MOVES);
 
   const lastAgentMove = [...INITIAL_MOVES].reverse().find(m => m.side !== PLAYER_COLOR);
