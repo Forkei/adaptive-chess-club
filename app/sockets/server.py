@@ -402,9 +402,35 @@ async def _on_connect(sid, environ, auth):
                 namespace=NAMESPACE,
             )
 
+    # Commit 5: if the character plays white and the match is fresh (move_count==0),
+    # fire the opening engine turn as a background task. The player's board will
+    # then show agent_thinking → agent_move → agent_chat via the normal streaming
+    # path rather than blocking here.
+    if (
+        role == ROLE_PARTICIPANT
+        and state_payload.status == "in_progress"
+        and state_payload.move_count == 0
+        and state_payload.player_color == "black"  # character is white
+    ):
+        asyncio.create_task(_fire_opening_move(match_id), name=f"opening-{match_id}")
+
     logger.info(
         "Socket.IO connect sid=%s player=%s match=%s role=%s", sid, player_id, match_id, role,
     )
+
+
+async def _fire_opening_move(match_id: str) -> None:
+    """Background task: plays the character's opening move when they have white."""
+    from app.config import get_settings
+    from app.matches.streaming import _run_engine_and_agents
+
+    emitters = _build_turn_emitters(match_id)
+    try:
+        await _run_engine_and_agents(
+            match_id=match_id, emitters=emitters, settings=get_settings()
+        )
+    except Exception:
+        logger.exception("Opening move background task failed for match=%s", match_id)
 
 
 @sio.on("disconnect", namespace=NAMESPACE)
