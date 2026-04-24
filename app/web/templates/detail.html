@@ -7,6 +7,7 @@
 <meta http-equiv="refresh" content="4" />
 {% endif %}
 <script src="/static/js/emotion_video.js" defer></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
 <style>
   /* Phase 4.2.5 — pre-match chat pane on the character detail page.
      Reuses chat-bubble-* from base.html. */
@@ -147,11 +148,14 @@
   const emotionInd = document.getElementById('emotion-indicator');
   const gaHint = document.getElementById('game-action-hint');
 
-  function renderBubble(role, text, { pending } = {}) {
+  // --- UI helpers ----------------------------------------------------------
+
+  function renderBubble(role, text, { pending = false, id = null } = {}) {
     const placeholder = chatLog.querySelector('#chat-placeholder');
     if (placeholder) placeholder.remove();
     const div = document.createElement('div');
     div.className = (role === 'character' ? 'chat-bubble-agent' : 'chat-bubble-player') + (pending ? ' in-transit' : '');
+    if (id) div.dataset.turnId = id;
     const label = role === 'character' ? CHAR_NAME : 'You';
     div.innerHTML =
       `<span class="text-xs uppercase tracking-wider text-neutral-500">${label}</span>` +
@@ -172,59 +176,215 @@
     }
   }
 
-  async function loadHistory() {
-    try {
-      const r = await fetch(`/characters/${CHAR_ID}/chat/history`);
-      if (!r.ok) return;
-      const data = await r.json();
-      for (const t of data.turns) {
+  let _thinkingBubble = null;
+  function showThinking() {
+    if (_thinkingBubble) return;
+    const placeholder = chatLog.querySelector('#chat-placeholder');
+    if (placeholder) placeholder.remove();
+    _thinkingBubble = document.createElement('div');
+    _thinkingBubble.className = 'chat-bubble-agent in-transit';
+    _thinkingBubble.innerHTML =
+      `<span class="text-xs uppercase tracking-wider text-neutral-500">${CHAR_NAME}</span>` +
+      `<div class="text-sm mt-0.5 italic text-neutral-500">${CHAR_NAME} is thinking…</div>`;
+    chatLog.appendChild(_thinkingBubble);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function removeThinking() {
+    if (_thinkingBubble) {
+      _thinkingBubble.remove();
+      _thinkingBubble = null;
+    }
+  }
+
+  function showConnectionStatus(msg, ok = true) {
+    let bar = document.getElementById('connection-status-bar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'connection-status-bar';
+      bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;padding:6px 12px;font-size:12px;z-index:999;text-align:center;';
+      document.body.appendChild(bar);
+    }
+    bar.textContent = msg;
+    bar.style.background = ok ? 'rgba(0,0,0,0.7)' : 'rgba(168,66,63,0.85)';
+    bar.style.color = ok ? '#aaa' : '#fff';
+    bar.style.display = msg ? 'block' : 'none';
+  }
+
+  // --- Socket.IO connection ------------------------------------------------
+
+  let socket = null;
+  let socketReady = false;
+  let pendingBubble = null;
+
+  function initSocket() {
+    socket = io('/room', {
+      query: { character_id: CHAR_ID },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+
+    socket.on('connect', () => {
+      socketReady = true;
+      showConnectionStatus('');
+      console.log('[room] connected', socket.id);
+    });
+
+    socket.on('disconnect', (reason) => {
+      socketReady = false;
+      removeThinking();
+      if (reason !== 'io client disconnect') {
+        showConnectionStatus('Reconnecting…', false);
+      }
+      console.log('[room] disconnected', reason);
+    });
+
+    socket.on('connect_error', (err) => {
+      socketReady = false;
+      showConnectionStatus('Connection error — retrying…', false);
+      console.warn('[room] connect_error', err.message);
+    });
+
+    // On connect: populate history from room_state.
+    socket.on('room_state', (data) => {
+      showConnectionStatus('');
+      // Clear existing chat log content (history will be re-rendered from socket).
+      chatLog.innerHTML = '';
+      _thinkingBubble = null;
+
+      if (data.handed_off_match_id) {
+        window.location.href = `/matches/${data.handed_off_match_id}`;
+        return;
+      }
+
+      for (const t of (data.turns || [])) {
         renderBubble(t.role, t.text);
         if (t.role === 'character') setEmotion(t.emotion, t.emotion_intensity || 0);
       }
-      if (data.handed_off_match_id) {
-        window.location.href = `/matches/${data.handed_off_match_id}`;
+
+      if (!data.turns || data.turns.length === 0) {
+        const ph = document.createElement('div');
+        ph.id = 'chat-placeholder';
+        ph.className = 'text-[12px] text-[var(--mp-ink-faint)] italic';
+        ph.textContent = `Say hello to ${CHAR_NAME}. They'll decide when it's time to play.`;
+        chatLog.appendChild(ph);
       }
-    } catch (_) {}
-  }
 
-  async function sendMessage(text) {
-    if (!text) return;
-    const pendingBubble = renderBubble('player', text, { pending: true });
-    chatInput.value = '';
-    chatInput.disabled = true;
+      chatInput.disabled = false;
+      chatInput.focus();
+    });
 
-    try {
-      const body = new FormData();
-      body.append('text', text);
-      const r = await fetch(`/characters/${CHAR_ID}/chat`, { method: 'POST', body });
-      if (!r.ok) {
+    socket.on('player_chat_ack', (data) => {
+      // Confirm the optimistic bubble (clear in-transit state).
+      if (pendingBubble) {
         pendingBubble.classList.remove('in-transit');
-        pendingBubble.style.opacity = '0.5';
-        return;
+        if (data.turn_id) pendingBubble.dataset.turnId = data.turn_id;
+        pendingBubble = null;
       }
-      const data = await r.json();
-      pendingBubble.classList.remove('in-transit');
-      renderBubble('character', data.character_turn.text);
-      setEmotion(data.character_turn.emotion, data.character_turn.emotion_intensity || 0);
+    });
 
-      if (data.character_turn.game_action === 'propose_game') {
+    socket.on('agent_thinking', () => {
+      showThinking();
+    });
+
+    socket.on('agent_chat', (data) => {
+      removeThinking();
+      renderBubble('character', data.text || '…');
+      setEmotion(data.emotion, data.emotion_intensity || 0);
+
+      if (data.game_action === 'propose_game') {
         gaHint.textContent = "they've suggested a game — reply to accept";
         gaHint.classList.remove('hidden');
-      } else if (data.character_turn.game_action === 'start_game') {
+      } else if (data.game_action === 'start_game') {
         gaHint.textContent = "setting up the board…";
         gaHint.classList.remove('hidden');
       } else {
         gaHint.classList.add('hidden');
       }
+    });
 
+    socket.on('agent_error', (data) => {
+      removeThinking();
+      const msg = (data && data.message) || 'Something went wrong — try again.';
+      // Subtle inline error rather than a toast.
+      const errDiv = document.createElement('div');
+      errDiv.className = 'text-xs text-rose-400 italic mt-1';
+      errDiv.textContent = msg;
+      chatLog.appendChild(errDiv);
+      chatLog.scrollTop = chatLog.scrollHeight;
+      chatInput.disabled = false;
+      chatInput.focus();
+    });
+
+    socket.on('game_started', (data) => {
+      removeThinking();
+      gaHint.textContent = "setting up the board…";
+      gaHint.classList.remove('hidden');
+      chatInput.disabled = true;
+      if (data && data.redirect_url) {
+        window.location.href = data.redirect_url;
+      }
+    });
+
+    socket.on('error', (data) => {
+      console.warn('[room] server error', data);
+    });
+  }
+
+  // --- Send via socket (with HTTP fallback) --------------------------------
+
+  async function sendMessageHttp(text) {
+    const pb = renderBubble('player', text, { pending: true });
+    chatInput.value = '';
+    chatInput.disabled = true;
+    try {
+      const body = new FormData();
+      body.append('text', text);
+      const r = await fetch(`/characters/${CHAR_ID}/chat`, { method: 'POST', body });
+      if (!r.ok) {
+        pb.classList.remove('in-transit');
+        pb.style.opacity = '0.5';
+        chatInput.disabled = false;
+        chatInput.focus();
+        return;
+      }
+      const data = await r.json();
+      pb.classList.remove('in-transit');
+      if (data.character_turn) {
+        renderBubble('character', data.character_turn.text);
+        setEmotion(data.character_turn.emotion, data.character_turn.emotion_intensity || 0);
+        if (data.character_turn.game_action === 'propose_game') {
+          gaHint.textContent = "they've suggested a game — reply to accept";
+          gaHint.classList.remove('hidden');
+        } else if (data.character_turn.game_action === 'start_game') {
+          gaHint.textContent = "setting up the board…";
+          gaHint.classList.remove('hidden');
+        }
+      }
       if (data.redirect_url) {
         setTimeout(() => { window.location.href = data.redirect_url; }, 900);
       }
     } catch (_) {
-      pendingBubble.style.opacity = '0.5';
+      pb.style.opacity = '0.5';
     } finally {
       chatInput.disabled = false;
       chatInput.focus();
+    }
+  }
+
+  function sendMessage(text) {
+    if (!text) return;
+    if (socketReady && socket && socket.connected) {
+      pendingBubble = renderBubble('player', text, { pending: true });
+      chatInput.value = '';
+      chatInput.disabled = true;
+      socket.emit('player_chat', { text });
+      // Re-enable after brief window (agent_thinking re-enables after response).
+      setTimeout(() => { chatInput.disabled = false; }, 200);
+    } else {
+      sendMessageHttp(text);
     }
   }
 
@@ -235,16 +395,25 @@
     if (text) sendMessage(text);
   });
 
-  // Signal leaving so the session is closed cleanly (best-effort; the Beacon
-  // API keeps the request alive even as the page unloads).
+  // Signal leaving so the session is closed cleanly (best-effort).
   window.addEventListener('pagehide', () => {
     try {
       navigator.sendBeacon(`/characters/${CHAR_ID}/chat/leave`, new FormData());
     } catch (_) {}
   });
 
-  loadHistory();
-  chatInput.focus();
+  // Disable input until socket room_state arrives; fall back to HTTP if no socket.
+  chatInput.disabled = true;
+  initSocket();
+
+  // If socket doesn't connect within 3s, unlock via HTTP path so the user
+  // isn't stuck staring at a disabled input field.
+  setTimeout(() => {
+    if (!socketReady) {
+      chatInput.disabled = false;
+      showConnectionStatus('Live connection unavailable — using fallback', false);
+    }
+  }, 3000);
 </script>
 {% endif %}
 
