@@ -157,6 +157,14 @@ def index(
 # ------------------------------ Discovery ------------------------------
 
 
+def _kenji_character_id(session) -> str | None:
+    """Return Kenji's character UUID, or None if not seeded yet."""
+    kenji = session.execute(
+        select(Character).where(Character.preset_key == "kenji_sato")
+    ).scalar_one_or_none()
+    return kenji.id if kenji is not None else None
+
+
 @router.get("/leaderboard/characters", response_class=HTMLResponse)
 def leaderboard_characters_page(
     request: Request,
@@ -166,7 +174,9 @@ def leaderboard_characters_page(
 ) -> HTMLResponse:
     if window not in ("all", "30d", "7d"):
         window = "all"
-    rows = character_leaderboard(session, viewer=player, window=window)
+    rows = character_leaderboard(
+        session, viewer=player, window=window, character_id=_kenji_character_id(session)
+    )
     return templates.TemplateResponse(
         request,
         "leaderboard_characters.html",
@@ -183,7 +193,9 @@ def leaderboard_players_page(
 ) -> HTMLResponse:
     if window not in ("all", "30d", "7d"):
         window = "all"
-    rows = player_leaderboard(session, viewer=player, window=window)
+    rows = player_leaderboard(
+        session, viewer=player, window=window, character_id=_kenji_character_id(session)
+    )
     return templates.TemplateResponse(
         request,
         "leaderboard_players.html",
@@ -249,8 +261,9 @@ def discovery(
     player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
-    live = list_live_matches(session, viewer=player, limit=20)
-    recent = list_recent_matches(session, viewer=player, limit=20)
+    kenji_id = _kenji_character_id(session)
+    live = list_live_matches(session, viewer=player, limit=20, character_id=kenji_id)
+    recent = list_recent_matches(session, viewer=player, limit=20, character_id=kenji_id)
 
     return templates.TemplateResponse(
         request,

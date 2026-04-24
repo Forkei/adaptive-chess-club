@@ -56,7 +56,7 @@ def test_alembic_upgrade_head_on_fresh_db_is_idempotent(tmp_path, monkeypatch):
     try:
         cur = con.execute("SELECT version_num FROM alembic_version")
         version = cur.fetchone()[0]
-        assert version == "0012_character_evolution_state"
+        assert version == "0014_mature_default_rating"
     finally:
         con.close()
 
@@ -155,11 +155,11 @@ def test_alembic_upgrade_backfills_pre_3a_db(tmp_path, monkeypatch):
         ).fetchone()
         assert margot[0] == "family"
 
-        # max_content_rating present and defaulted.
+        # max_content_rating present and upgraded to mature (migration 0014 backfill).
         mcr = con.execute(
             "SELECT max_content_rating FROM players WHERE id = 'p1'"
         ).fetchone()
-        assert mcr[0] == "family"
+        assert mcr[0] == "mature"
 
         # Visibility defaulted to public.
         vis = con.execute(

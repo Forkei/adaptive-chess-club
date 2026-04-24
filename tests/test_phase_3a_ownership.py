@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.db import SessionLocal
@@ -9,6 +10,16 @@ from app.main import create_app
 from app.models.character import Character, CharacterState, ContentRating, Visibility
 from app.models.match import Player
 from tests.conftest import signup_and_login
+
+
+@pytest.fixture(autouse=True)
+def _enable_character_api(monkeypatch):
+    """Enable character create/edit/clone API endpoints for ownership tests."""
+    monkeypatch.setenv("ALLOW_CHARACTER_API", "true")
+    from app.config import get_settings
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _client() -> TestClient:

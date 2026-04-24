@@ -81,21 +81,25 @@ def list_live_matches(
     viewer: Player,
     limit: int = 20,
     offset: int = 0,
+    character_id: str | None = None,
 ) -> list[MatchSummary]:
     """In-progress matches the viewer can see, most-recently started first.
 
     Excludes the viewer's own matches — they're already in them.
+    If character_id is given, restrict to matches against that character.
     """
+    clauses = [
+        Match.status == MatchStatus.IN_PROGRESS,
+        Match.player_id != viewer.id,
+        *visible_character_filter(viewer),
+    ]
+    if character_id is not None:
+        clauses.append(Match.character_id == character_id)
     stmt = (
         select(Match, Character, Player)
         .join(Character, Match.character_id == Character.id)
         .join(Player, Match.player_id == Player.id)
-        .where(
-            Match.status == MatchStatus.IN_PROGRESS,
-            Match.player_id != viewer.id,
-            *visible_character_filter(viewer),
-            Character.preset_key == "kenji_sato",
-        )
+        .where(*clauses)
         .order_by(Match.started_at.desc())
         .offset(offset)
         .limit(limit)
@@ -109,21 +113,25 @@ def list_recent_matches(
     viewer: Player,
     limit: int = 20,
     offset: int = 0,
+    character_id: str | None = None,
 ) -> list[MatchSummary]:
     """Completed or abandoned matches the viewer can see, most-recently ended first.
 
     Includes the viewer's own matches so they can navigate back to a summary.
+    If character_id is given, restrict to matches against that character.
     """
+    clauses = [
+        Match.status.in_([MatchStatus.COMPLETED, MatchStatus.RESIGNED, MatchStatus.ABANDONED]),
+        Match.ended_at.is_not(None),
+        *visible_character_filter(viewer),
+    ]
+    if character_id is not None:
+        clauses.append(Match.character_id == character_id)
     stmt = (
         select(Match, Character, Player)
         .join(Character, Match.character_id == Character.id)
         .join(Player, Match.player_id == Player.id)
-        .where(
-            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.RESIGNED, MatchStatus.ABANDONED]),
-            Match.ended_at.is_not(None),
-            *visible_character_filter(viewer),
-            Character.preset_key == "kenji_sato",
-        )
+        .where(*clauses)
         .order_by(Match.ended_at.desc())
         .offset(offset)
         .limit(limit)

@@ -125,9 +125,17 @@ def character_leaderboard(
     *,
     viewer: Player,
     window: LeaderboardWindow = "all",
+    character_id: str | None = None,
 ) -> list[CharacterLeaderboardRow]:
     char_wins, char_losses, draws = _char_win_expr()
     total = func.count(Match.id)
+
+    where_clauses = [
+        *_window_clauses(window),
+        *visible_character_filter(viewer),
+    ]
+    if character_id is not None:
+        where_clauses.append(Character.id == character_id)
 
     stmt = (
         select(
@@ -141,11 +149,7 @@ def character_leaderboard(
             draws.label("draws"),
         )
         .join(Match, Match.character_id == Character.id)
-        .where(
-            *_window_clauses(window),
-            *visible_character_filter(viewer),
-            Character.preset_key == "kenji_sato",
-        )
+        .where(*where_clauses)
         .group_by(Character.id, Character.name, Character.avatar_emoji, Character.current_elo)
         .having(total >= MIN_MATCHES_FOR_LEADERBOARD)
     )
@@ -186,11 +190,13 @@ def player_leaderboard(
     *,
     viewer: Player,
     window: LeaderboardWindow = "all",
+    character_id: str | None = None,
 ) -> list[PlayerLeaderboardRow]:
     """Rank players by win rate vs. characters.
 
     A match's outcome is inverted from `_char_win_expr`: the player wins when
     the character loses, etc. Abandoned matches are player losses.
+    If character_id is given, restrict to matches against that character.
     """
     total = func.count(Match.id)
 
@@ -245,7 +251,7 @@ def player_leaderboard(
             *_window_clauses(window),
             *visible_character_filter(viewer),
             Player.username != "legacy_system",  # never include the system fallback
-            Character.preset_key == "kenji_sato",
+            *([] if character_id is None else [Character.id == character_id]),
         )
         .group_by(Player.id, Player.username, Player.display_name, Player.elo)
         .having(total >= MIN_MATCHES_FOR_LEADERBOARD)
