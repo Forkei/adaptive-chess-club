@@ -102,7 +102,8 @@ class Player(Base):
             values_callable=lambda obj: [e.value for e in obj],
         ),
         nullable=False,
-        default=ContentRating.FAMILY,
+        default=ContentRating.MATURE,
+        server_default="mature",
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
 
