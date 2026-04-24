@@ -930,6 +930,11 @@ async def character_chat_post(
     if character.state != CharacterState.READY:
         raise HTTPException(status_code=409, detail="Character is still preparing its memories.")
 
+    logger.info(
+        "HTTP chat path hit for character=%s — client should use /room socket namespace",
+        character_id,
+    )
+
     chat_session = chat_get_or_create_session(session, character=character, player=player)
 
     try:
@@ -943,60 +948,45 @@ async def character_chat_post(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # If the Soul decided to start a game AND the character has white,
-    # play the opening move before redirecting — otherwise the board
-    # lands with "your move" when the player is black. Matches the
-    # behaviour of the /matches start path (start_match_html).
-    if result.handed_off_match_id:
-        from app.matches.service import get_match as get_pve_match
-        logger.info(
-            "[chat] hand-off detected match=%s; running opening engine turn",
-            result.handed_off_match_id,
-        )
-        try:
-            handed_match = get_pve_match(session, result.handed_off_match_id)
-            opening = await match_service.start_match_play(session, handed_match)
-            session.commit()
-            logger.info(
-                "[chat] hand-off opening move complete match=%s opening_move=%s",
-                result.handed_off_match_id, opening.san if opening else None,
-            )
-        except Exception:
-            session.rollback()
-            logger.exception(
-                "[chat] hand-off opening move failed for match=%s (non-fatal)",
-                result.handed_off_match_id,
-            )
+    # Opening move intentionally NOT run here. The /play socket connect handler
+    # fires it as a background task when move_count==0 and character is white.
+    # Clients using the HTTP fallback will see the engine's move arrive once they
+    # connect to the /play namespace.
 
     ct = result.character_turn
-    return {
-        "player_turn": {
-            "id": result.player_turn.id,
-            "turn_number": result.player_turn.turn_number,
-            "text": result.player_turn.text,
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=202,
+        content={
+            "session_id": chat_session.id,
+            "player_turn": {
+                "id": result.player_turn.id,
+                "turn_number": result.player_turn.turn_number,
+                "text": result.player_turn.text,
+            },
+            "character_turn": {
+                "id": ct.id,
+                "turn_number": ct.turn_number,
+                "text": ct.text,
+                "emotion": ct.emotion,
+                "emotion_intensity": ct.emotion_intensity,
+                "game_action": ct.game_action,
+            },
+            "surfaced_memories": [
+                {
+                    "memory_id": m.memory_id,
+                    "narrative_text": m.narrative_text,
+                    "retrieval_reason": m.retrieval_reason,
+                    "from_cache": m.from_cache,
+                }
+                for m in result.surfaced_memories
+            ],
+            "handed_off_match_id": result.handed_off_match_id,
+            "redirect_url": (
+                f"/matches/{result.handed_off_match_id}" if result.handed_off_match_id else None
+            ),
         },
-        "character_turn": {
-            "id": ct.id,
-            "turn_number": ct.turn_number,
-            "text": ct.text,
-            "emotion": ct.emotion,
-            "emotion_intensity": ct.emotion_intensity,
-            "game_action": ct.game_action,
-        },
-        "surfaced_memories": [
-            {
-                "memory_id": m.memory_id,
-                "narrative_text": m.narrative_text,
-                "retrieval_reason": m.retrieval_reason,
-                "from_cache": m.from_cache,
-            }
-            for m in result.surfaced_memories
-        ],
-        "handed_off_match_id": result.handed_off_match_id,
-        "redirect_url": (
-            f"/matches/{result.handed_off_match_id}" if result.handed_off_match_id else None
-        ),
-    }
+    )
 
 
 @router.post("/characters/{character_id}/chat/leave")
