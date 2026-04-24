@@ -123,6 +123,15 @@ def index(
             {"player": None},
         )
 
+    # Single-character mode: redirect logged-in users straight to Kenji's room.
+    kenji = session.execute(
+        select(Character).where(Character.preset_key == "kenji_sato")
+    ).scalar_one_or_none()
+    if kenji is not None:
+        return RedirectResponse(url=f"/characters/{kenji.id}", status_code=302)
+
+    # Fallback: Kenji not seeded yet (fresh DB before first startup completes).
+    logger.warning("Kenji (preset_key='kenji_sato') not found — falling back to character grid")
     stmt = (
         select(Character)
         .where(*_visible_filter(player))
@@ -130,7 +139,6 @@ def index(
     )
     chars = list(session.execute(stmt).scalars())
 
-    # Build owner-username map for labels.
     owner_ids = {c.owner_id for c in chars if c.owner_id}
     owner_map: dict[str, str] = {}
     if owner_ids:
