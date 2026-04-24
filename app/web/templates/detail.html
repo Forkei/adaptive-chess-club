@@ -94,7 +94,7 @@
         <button class="mp-btn mp-btn-danger">Delete</button>
       </form>
     </div>
-    {% elif not is_owner %}
+    {% elif not is_owner and not character.is_preset %}
     <form method="post" action="/characters/{{ character.id }}/clone">
       <button class="mp-btn mp-btn-ghost">Clone</button>
     </form>
