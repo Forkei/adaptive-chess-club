@@ -247,14 +247,12 @@ def test_opponent_notes_forwarded_into_match_extra_state():
         assert match.extra_state.get("pre_match_chat_session_id") == sess.id
 
 
-def test_chat_route_hand_off_plays_opening_when_character_white(monkeypatch):
-    """Regression (demo-rescue Fix 1): when Soul emits start_game and the
-    character is white, the chat route must commit the engine opening move
-    so a subsequent session (the board page) sees move_count == 1.
+def test_chat_route_hand_off_returns_202_and_creates_match(monkeypatch):
+    """Block 2: HTTP chat POST now returns 202 Accepted.
 
-    Before the fix, the route awaited ``start_match_play`` but never
-    committed; ``_persist_move`` only flushes, so the move vanished when
-    the request-scoped session closed.
+    The opening move is no longer run synchronously here — it fires on
+    /play socket connect. Asserts: status 202, match created with
+    move_count==0 (engine move fires later on socket connect).
     """
     import app.matches.service as match_service_mod
     from app.engine.registry import reset_engines_for_testing
@@ -306,19 +304,19 @@ def test_chat_route_hand_off_plays_opening_when_character_white(monkeypatch):
             f"/characters/{char_id}/chat", data={"text": "let's go"},
         )
 
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
     match_id = r.json()["handed_off_match_id"]
     assert match_id is not None
 
-    # Fresh session: the engine move must have been committed, not merely
-    # flushed into the request-scoped session.
+    # Opening move is no longer run synchronously on the HTTP path.
+    # It fires as a background task when the client connects to /play.
     with SessionLocal() as s:
         m = s.get(Match, match_id)
         assert m is not None
         assert m.player_color == Color.BLACK  # character = WHITE
-        assert m.move_count == 1, (
-            "character is white but no opening move was committed; "
-            "chat hand-off is missing session.commit()"
+        assert m.move_count == 0, (
+            "opening move should not be committed synchronously; "
+            "it fires on /play socket connect (Block 2 change)"
         )
 
 
@@ -370,7 +368,7 @@ def test_pre_match_chat_seeds_table_talk_on_match_page(monkeypatch):
         r = client.post(
             f"/characters/{char_id}/chat", data={"text": "hey there"},
         )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
 
     # Turn 2: player asks to play, Soul emits start_game → hand-off.
     with patch(
@@ -384,7 +382,7 @@ def test_pre_match_chat_seeds_table_talk_on_match_page(monkeypatch):
         r = client.post(
             f"/characters/{char_id}/chat", data={"text": "let's play"},
         )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
     match_id = r.json()["handed_off_match_id"]
     assert match_id is not None
 
