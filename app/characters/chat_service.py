@@ -34,7 +34,7 @@ from app.engine.board_abstraction import board_to_english
 from app.models.evolution import CharacterEvolutionState
 from app.post_match.evolution import tone_bias_for
 from app.matches.service import create_match as create_pve_match
-from app.models.character import Character
+from app.models.character import Character, CharacterState
 from app.models.chat import (
     CharacterChatSession,
     CharacterChatTurn,
@@ -49,6 +49,10 @@ logger = logging.getLogger(__name__)
 # Keep the last N turns in the Soul's `recent_chat` field. Small number —
 # Soul cost scales with prompt size and the system prompt is already big.
 RECENT_CHAT_WINDOW = 6
+
+# Probability the character opens the conversation when the room has
+# zero turns. Not 100% so it doesn't feel scripted.
+GREETING_PROBABILITY = 0.7
 
 
 # --- session + turn helpers -----------------------------------------------
@@ -367,6 +371,142 @@ def _hand_off_to_match(
         chat_session.id, match.id, len(notes),
     )
     return match.id
+
+
+def _opponent_context(session: Session, character: Character, player: Player) -> str | None:
+    """Build a short English string describing prior history with this
+    player — feeds into the greeting prompt so the character can say
+    "back for another one?" vs "first time here?" organically.
+    """
+    from app.models.match import MatchResult, OpponentProfile
+
+    profile = session.execute(
+        select(OpponentProfile)
+        .where(OpponentProfile.character_id == character.id)
+        .where(OpponentProfile.player_id == player.id)
+    ).scalar_one_or_none()
+    if profile is None or profile.games_played == 0:
+        return None
+    wins = profile.games_won_by_character or 0
+    losses = profile.games_lost_by_character or 0
+    draws = profile.games_played - wins - losses
+    bits = [f"You've faced {player.username} {profile.games_played} time(s)"]
+    record = f"(W {wins} / L {losses}"
+    if draws:
+        record += f" / D {draws}"
+    record += ")"
+    bits.append(record)
+    if profile.narrative_summary:
+        bits.append(profile.narrative_summary.strip())
+    return " ".join(bits)
+
+
+def maybe_character_greets(
+    session: Session,
+    chat_session: CharacterChatSession,
+    character: Character,
+    player: Player,
+) -> CharacterChatTurn | None:
+    """Fire an unsolicited character greeting when the player first
+    enters an empty chat room. Returns the persisted turn, or None.
+
+    Preconditions:
+    - Session has zero turns (first arrival)
+    - Random roll under GREETING_PROBABILITY
+    - Character is READY
+
+    Memories get surfaced by the Subconscious before the Soul speaks,
+    flavored by any prior OpponentProfile with this player, so Viktor
+    can rib a repeat loser or reset warily with a stranger.
+    """
+    import random
+
+    if chat_session.status != ChatSessionStatus.ACTIVE:
+        return None
+    if character.state != CharacterState.READY:
+        return None
+
+    existing = get_turns(session, chat_session)
+    if existing:
+        return None
+    if random.random() > GREETING_PROBABILITY:
+        return None
+
+    board = _idle_board_summary()
+    mood = _load_or_init_chat_mood(session, chat_session, character)
+
+    # Prime the Subconscious. No `last_player_chat` (player hasn't spoken),
+    # but opponent profile + player identity still steer memory retrieval.
+    surfaced: list[SurfacedMemory] = []
+    try:
+        sub_input = SubconsciousInput(
+            character_id=character.id,
+            match_id=f"chat:{chat_session.id}",
+            current_turn=0,
+            board_summary=board,
+            mood=mood,
+            last_player_uci=None,
+            last_player_chat=None,
+            last_moves_san=[],
+            recent_chat=[],
+            opening_label=None,
+            current_player_id=player.id,
+            opponent_style_features=None,
+        )
+        surfaced = run_subconscious(session, character, sub_input) or []
+    except Exception:
+        logger.exception("[chat] greeting subconscious failed for session=%s", chat_session.id)
+
+    opponent_ctx = _opponent_context(session, character, player)
+
+    try:
+        soul_input = SoulInput(
+            board=board,
+            mood=mood,
+            surfaced_memories=surfaced,
+            recent_chat=[],
+            engine_move_san="",
+            engine_move_uci="",
+            engine_eval_cp=None,
+            engine_considered=None,
+            engine_time_ms=None,
+            move_number=0,
+            game_phase="pre-match",
+            opponent_profile_summary=opponent_ctx,
+            head_to_head=None,
+            # Player has NOT spoken — this is a proactive greeting. The Soul
+            # prompt's pre-match docs call for a one-line opener if the
+            # character feels like speaking first.
+            player_just_spoke=False,
+            last_player_chat=None,
+            match_id=f"chat:{chat_session.id}",
+            character_color="white",
+        )
+        soul_resp = run_soul(character, soul_input)
+    except Exception:
+        logger.exception("[chat] greeting soul failed for session=%s", chat_session.id)
+        return None
+
+    if not soul_resp.speak:
+        # Soul decided silence — don't force a bubble. Player has to say
+        # hi first. That's fine; it's probabilistic by design.
+        return None
+
+    turn = _append_character_turn(
+        session, chat_session, text=soul_resp.speak, soul_response=soul_resp,
+    )
+    # Persist mood evolution from this greeting so the next turn reads it.
+    try:
+        raw_next = apply_deltas(mood, soul_resp.mood_deltas.to_dict())
+        smoothed = smooth_mood(mood, raw_next)
+        save_mood(_chat_mood_key(chat_session.id), smoothed, smoothed=True)
+    except Exception:
+        logger.exception("[chat] greeting mood persist failed for session=%s", chat_session.id)
+    logger.info(
+        "[chat] character greeted first in session=%s (char=%s player=%s)",
+        chat_session.id, character.id, player.id,
+    )
+    return turn
 
 
 def close_session(session: Session, chat_session: CharacterChatSession) -> None:

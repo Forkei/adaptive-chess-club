@@ -15,4 +15,12 @@ from __future__ import annotations
 from app.sockets.bridge import emit_post_match_status
 from app.sockets.server import build_asgi_app, match_room, sio
 
+# Importing for side-effects — registers /lobby namespace handlers on `sio`.
+# The module itself is rarely imported directly; HTTP routes use its
+# `broadcast_*` helpers through `from app.sockets.lobby_server import ...`.
+from app.sockets import lobby_server  # noqa: F401
+
+# Importing for side-effects — registers /room namespace handlers on `sio`.
+from app.sockets import room_server  # noqa: F401
+
 __all__ = ["sio", "build_asgi_app", "match_room", "emit_post_match_status"]
