@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "no-reply@metropolis-chess.local"
 
+    # Single-character mode: create/edit/clone character API endpoints are
+    # disabled unless this env var is set. Tests flip it to True in their scope.
+    allow_character_api: bool = False
+
     @property
     def log_path(self) -> Path:
         p = Path(self.log_dir)

@@ -8,6 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.auth import require_player
+from app.config import get_settings
 from app.db import get_session
 from app.memory.crud import counts_by_scope, counts_by_type, list_for_character
 from app.models.character import (
@@ -34,6 +35,11 @@ from app.schemas.memory import MemoryRead
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/characters", tags=["characters"])
+
+
+def _require_character_api() -> None:
+    if not get_settings().allow_character_api:
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 def _run_generation_bg(character_id: str) -> None:
@@ -116,6 +122,7 @@ def create_character(
     player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> CharacterRead:
+    _require_character_api()
     character = Character(
         name=payload.name,
         short_description=payload.short_description,
@@ -155,6 +162,7 @@ def update_character(
     player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> CharacterRead:
+    _require_character_api()
     character = session.get(Character, character_id)
     if character is None or character.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -211,6 +219,7 @@ def clone_character(
     player: Player = Depends(require_player),
     session: Session = Depends(get_session),
 ) -> CharacterRead:
+    _require_character_api()
     source = session.get(Character, character_id)
     if source is None or source.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Character not found")
