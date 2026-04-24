@@ -94,6 +94,7 @@ def list_live_matches(
             Match.status == MatchStatus.IN_PROGRESS,
             Match.player_id != viewer.id,
             *visible_character_filter(viewer),
+            Character.preset_key == "kenji_sato",
         )
         .order_by(Match.started_at.desc())
         .offset(offset)
@@ -121,6 +122,7 @@ def list_recent_matches(
             Match.status.in_([MatchStatus.COMPLETED, MatchStatus.RESIGNED, MatchStatus.ABANDONED]),
             Match.ended_at.is_not(None),
             *visible_character_filter(viewer),
+            Character.preset_key == "kenji_sato",
         )
         .order_by(Match.ended_at.desc())
         .offset(offset)

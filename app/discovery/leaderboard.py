@@ -144,6 +144,7 @@ def character_leaderboard(
         .where(
             *_window_clauses(window),
             *visible_character_filter(viewer),
+            Character.preset_key == "kenji_sato",
         )
         .group_by(Character.id, Character.name, Character.avatar_emoji, Character.current_elo)
         .having(total >= MIN_MATCHES_FOR_LEADERBOARD)
@@ -244,6 +245,7 @@ def player_leaderboard(
             *_window_clauses(window),
             *visible_character_filter(viewer),
             Player.username != "legacy_system",  # never include the system fallback
+            Character.preset_key == "kenji_sato",
         )
         .group_by(Player.id, Player.username, Player.display_name, Player.elo)
         .having(total >= MIN_MATCHES_FOR_LEADERBOARD)

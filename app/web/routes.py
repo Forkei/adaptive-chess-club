@@ -252,21 +252,6 @@ def discovery(
     live = list_live_matches(session, viewer=player, limit=20)
     recent = list_recent_matches(session, viewer=player, limit=20)
 
-    # Character grid — same filter as /.
-    stmt = (
-        select(Character)
-        .where(*_visible_filter(player))
-        .order_by(Character.is_preset.desc(), Character.created_at.desc())
-    )
-    chars = list(session.execute(stmt).scalars())
-    owner_ids = {c.owner_id for c in chars if c.owner_id}
-    owner_map: dict[str, str] = {}
-    if owner_ids:
-        owners = session.execute(
-            select(Player).where(Player.id.in_(owner_ids))
-        ).scalars()
-        owner_map = {p.id: p.username for p in owners}
-
     return templates.TemplateResponse(
         request,
         "discovery.html",
@@ -274,8 +259,6 @@ def discovery(
             "player": player,
             "live_matches": live,
             "recent_matches": recent,
-            "characters": chars,
-            "owner_map": owner_map,
         },
     )
 
