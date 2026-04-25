@@ -518,7 +518,15 @@
   });
 
   socket.on('player_move_applied', (payload) => {
-    // We already moved the piece locally; just play sfx + fx.
+    // Add the player's move to the move list (server confirms move_number + san).
+    appendMoveRow({
+      move_number: payload.move_number,
+      side: PLAYER_COLOR,
+      uci: payload.uci,
+      san: payload.san,
+      time_taken_ms: null,
+      eval_cp: null,
+    });
     if (window.MpSfx) playMoveSfx(payload.san || '');
     afterMoveFx(payload.uci, payload.san);
   });
