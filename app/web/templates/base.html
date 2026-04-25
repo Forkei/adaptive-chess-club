@@ -408,7 +408,7 @@
           </div>
         </details>
         {% else %}
-        <a href="/signup" class="hover:text-[var(--mp-ink)] transition">Sign up</a>
+        <a href="/signup" class="hover:text-[var(--mp-ink)] transition" data-sfx-hover>Sign up</a>
         <a href="/login" class="mp-btn mp-btn-brass">Log in</a>
         {% endif %}
       </nav>
@@ -448,7 +448,7 @@
        body[data-theme]. Either way the mute toggle in the header works.
   #}
   {% if room and room.ambient_track %}
-  <audio id="mp-ambient" src="{{ room.ambient_track }}" loop preload="auto"></audio>
+  <audio id="mp-ambient" src="{{ room.ambient_track }}" loop preload="auto" data-ambient-volume="{{ room.ambient_volume if room.ambient_volume is not none else 0.7 }}"></audio>
   <script src="/static/js/ambient.js" defer></script>
   {% else %}
   <script src="/static/js/synth_ambient.js" defer></script>
