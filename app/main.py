@@ -82,14 +82,19 @@ async def lifespan(app: FastAPI):
     housekeeping_task = asyncio.create_task(
         housekeeping.periodic_loop(), name="match-housekeeping",
     )
+    pvp_flagfall_task = asyncio.create_task(
+        housekeeping.pvp_flagfall_loop(), name="pvp-flagfall",
+    )
     yield
 
-    # Stop the periodic sweep cleanly before tearing the loop down.
-    housekeeping_task.cancel()
-    try:
-        await housekeeping_task
-    except (asyncio.CancelledError, Exception):
-        pass
+    # Stop the periodic sweeps cleanly before tearing the loop down.
+    for t in (housekeeping_task, pvp_flagfall_task):
+        t.cancel()
+    for t in (housekeeping_task, pvp_flagfall_task):
+        try:
+            await t
+        except (asyncio.CancelledError, Exception):
+            pass
     # Clear on shutdown so background threads don't try to schedule onto a dead loop.
     set_main_loop(None)
 
@@ -119,6 +124,13 @@ def create_app() -> FastAPI:
 
 
 fastapi_app = create_app()
+
+
+@fastapi_app.get("/health")
+async def health() -> dict:
+    return {"status": "ok"}
+
+
 # The combined ASGI app — uvicorn entry point. HTTP flows through FastAPI;
 # Socket.IO traffic is handled by `sio` from app.sockets.server.
 app = build_asgi_app(fastapi_app)
