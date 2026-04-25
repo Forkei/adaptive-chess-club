@@ -11,6 +11,19 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# --- Inline memory (Soul → save now) --------------------------------------
+
+
+class InlineMemoryRequest(BaseModel):
+    """A memory Soul wants to persist immediately, mid-conversation."""
+
+    narrative_text: str = Field(min_length=20, max_length=600)
+    triggers: list[str] = Field(min_length=2, max_length=10)
+    relevance_tags: list[str] = Field(min_length=1, max_length=8)
+    emotional_valence: float = Field(ge=-1.0, le=1.0)
+    type: Literal["observation", "habit", "opinion"]
+
+
 # --- Subconscious outputs --------------------------------------------------
 
 
@@ -93,6 +106,11 @@ class SoulResponse(BaseModel):
         description="A short observation about the opponent, queued for post-match "
         "processing. Optional; leave null if nothing new stood out. Not shown to the player.",
     )
+    save_memory: InlineMemoryRequest | None = Field(
+        default=None,
+        description="A memory to persist immediately. Fill in when the player reveals "
+        "something genuinely memorable mid-conversation. Leave null for most turns.",
+    )
     referenced_memory_ids: list[str] = Field(
         default_factory=list,
         description="IDs (from the surfaced memories shown in the prompt) that shaped "
@@ -101,15 +119,14 @@ class SoulResponse(BaseModel):
     game_action: Literal["none", "propose_game", "start_game"] = Field(
         default="none",
         description=(
-            "Phase 4.2.5 — the character's gameplay intent for this turn. "
-            "Only meaningful in the pre-match chat path (in a running match it's ignored). "
-            "'none' = keep chatting, no move toward a game. "
-            "'propose_game' = you just suggested playing ('shall we?'); the client still "
-            "waits for the user to agree. "
-            "'start_game' = either the user has clearly agreed OR you've decided it's time. "
-            "The server will create the match the instant this is returned. "
-            "Do NOT emit 'start_game' on the user's very first message; at least one exchange "
-            "of real conversation should happen first."
+            "The character's gameplay intent for this pre-match turn. "
+            "Ignored in a running match — set 'none' there. "
+            "'none' = keep chatting. Default for almost every turn. "
+            "'propose_game' = you just suggested playing; the client waits for the player to agree. "
+            "'start_game' = the player has EXPLICITLY asked to play right now "
+            "('let's play', 'I'm ready', 'start the game', etc.). "
+            "Do NOT use start_game for questions, small talk, greetings, or vague interest. "
+            "The match is created instantly on start_game — there is no undo."
         ),
     )
     internal_thinking: str | None = Field(

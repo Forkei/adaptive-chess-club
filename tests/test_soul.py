@@ -234,3 +234,110 @@ def test_soul_prompt_labels_engine_move_and_player_move_unambiguously():
     # Color reminders appear multiple times (header + per-section + instructions).
     assert prompt.count("white") >= 2
     assert prompt.count("black") >= 2
+
+
+# --- Regression: game_action start_game gating (Issue 2) -------------------
+
+
+def _pre_match_soul_input(player_text: str) -> SoulInput:
+    """A SoulInput shaped like the pre-match room pipeline."""
+    board = chess.Board()
+    return SoulInput(
+        board=board_to_english(board),
+        mood=MoodState(aggression=0.6, confidence=0.5, tilt=0.1, engagement=0.7),
+        surfaced_memories=[],
+        recent_chat=[f"player: {player_text}"],
+        engine_move_san="",
+        engine_move_uci="",
+        engine_eval_cp=None,
+        engine_considered=None,
+        engine_time_ms=None,
+        move_number=0,
+        game_phase="pre-match",
+        player_just_spoke=True,
+        last_player_chat=player_text,
+        match_id="chat:test-session",
+        character_color="white",
+    )
+
+
+def test_game_action_prompt_forbids_vague_trigger():
+    """The system prompt must explicitly prohibit start_game for questions
+    and small talk. If it doesn't, the LLM will start games on 'what's my rating?'.
+    """
+    from app.agents.prompts import build_system_prompt
+
+    system = build_system_prompt(_char())
+    assert "Do NOT emit start_game when" in system or "Do NOT use start_game" in system, (
+        "System prompt must contain explicit start_game guard for questions/small talk"
+    )
+    assert "what's my rating" in system.lower() or "asking a question" in system.lower(), (
+        "System prompt must list question-asking as an example that does NOT trigger start_game"
+    )
+    assert "small talk" in system.lower() or "greeting" in system.lower(), (
+        "System prompt must list small talk / greetings as non-triggers for start_game"
+    )
+
+
+def test_game_action_not_started_when_fake_llm_obeys_rules():
+    """Integration: if the LLM obeys the rules (returns 'none' for a question),
+    run_soul must pass that through unchanged."""
+    resp = SoulResponse(
+        speak="I don't know your rating, but I'll find out on the board.",
+        emotion="focused",
+        emotion_intensity=0.4,
+        game_action="none",
+    )
+    fake = _FakeLLMReturning(resp)
+    out = run_soul(_char(), _pre_match_soul_input("what's my rating?"), llm=fake)
+    assert out.game_action == "none", (
+        "Soul must not escalate game_action beyond what the LLM returned"
+    )
+
+
+def test_game_action_prompt_contains_explicit_examples():
+    """The prompt must contain concrete do-not-trigger examples so the LLM
+    has clear guidance, not just a vague rule."""
+    from app.agents.prompts import build_system_prompt
+
+    system = build_system_prompt(_char())
+    # Must list at least one explicit readiness phrase (positive case).
+    assert any(phrase in system for phrase in ("let's play", "let's go", "I'm ready", "ready")), (
+        "System prompt must list explicit player phrases that DO trigger start_game"
+    )
+    # Must forbid the impatience pattern that triggered the bug.
+    assert "impatient" in system.lower() or "bored" in system.lower() or "wanting to push" in system.lower() or "push" in system.lower(), (
+        "System prompt must explicitly say the character's impatience is not a valid start_game trigger"
+    )
+
+
+# --- Regression: no chess move claims (Issue 3) ----------------------------
+
+
+def test_chess_authority_rules_in_system_prompt():
+    """The system prompt must contain the move-claim prohibition so the LLM
+    knows it cannot predict or announce specific future moves."""
+    from app.agents.prompts import build_system_prompt
+
+    system = build_system_prompt(_char())
+    assert "King's Gambit" in system or "I'm opening with" in system, (
+        "System prompt must include a concrete forbidden-example like 'I'm opening with the King's Gambit'"
+    )
+    assert "engine" in system.lower() and ("pick" in system.lower() or "choos" in system.lower() or "decid" in system.lower()), (
+        "System prompt must explain that the ENGINE chooses moves, not the Soul"
+    )
+    assert "DO NOT say" in system or "Do not say" in system or "don't say" in system.lower(), (
+        "System prompt must contain a clear prohibition on move-claim phrases"
+    )
+
+
+def test_chess_authority_rule_allows_style_claims():
+    """The prohibition must be surgical: general style claims ('I like aggressive play')
+    are fine. The system prompt should distinguish style from specific move predictions."""
+    from app.agents.prompts import build_system_prompt
+
+    system = build_system_prompt(_char())
+    # The rules should allow style/tendency language.
+    assert "style" in system.lower() or "tendency" in system.lower() or "general" in system.lower(), (
+        "System prompt should clarify that style claims are allowed (just not specific move predictions)"
+    )
