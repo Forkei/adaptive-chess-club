@@ -1,8 +1,8 @@
 ---
 title: Metropolis Chess Club
-emoji: ♞
+emoji: ♟️
 colorFrom: indigo
-colorTo: amber
+colorTo: purple
 sdk: docker
 app_port: 7860
 pinned: false
