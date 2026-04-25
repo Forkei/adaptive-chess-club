@@ -1,6 +1,6 @@
-# Metropolis Chess Club — Phase 2a image.
+# Metropolis Chess Club — production image (Hugging Face Spaces + local Docker).
 # Base: python:3.12-slim. Installs Stockfish from Debian, Python deps via pip,
-# and pre-warms Maia-2 weights so first inference after boot is fast.
+# and pre-warms Maia-2 + sentence-transformers weights so cold starts don't stall.
 FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -9,10 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # System deps:
-# - stockfish: the engine binary. Debian's package is old-ish but works fine for
-#   our Elo range.
-# - build-essential + git: some ML deps (torch transitive) sometimes need to
-#   compile. Cheap to install and keeps build deterministic.
+# - stockfish: chess engine binary. /usr/games/stockfish on Debian.
+# - build-essential + git: torch transitive deps sometimes need compilation.
 # - curl: diagnostics.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         stockfish \
@@ -24,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python deps first so docker caches them across code changes.
+# Install Python deps first so Docker caches them across code changes.
 COPY pyproject.toml /app/
 RUN pip install --upgrade pip && \
     pip install -e "." && \
@@ -41,29 +39,46 @@ RUN pip install --upgrade pip && \
         "pyzstd>=0.16.0" \
         "gdown>=5.0.0"
 
-# Copy the app after deps — this layer churns per commit.
+# Copy app + support files.
 COPY app /app/app
 COPY scripts /app/scripts
+COPY alembic /app/alembic
+COPY alembic.ini /app/alembic.ini
 COPY pytest.ini /app/
 COPY tests /app/tests
 
-# Warm the Maia-2 cache. Non-fatal — if weights can't be fetched at build time,
-# they'll download on first inference instead.
-# Note: maia2's model.py downloads weights to /app/maia2_models/ (hardcoded
-# upstream), so that's the path we cache via a compose volume. MAIA2_CACHE_DIR
-# is kept as an env var for future-proofing if/when maia2 respects it.
+# Pre-download model weights at build time so cold starts don't hang.
+# HF_HOME is the unified cache for both huggingface_hub (Maia-2) and
+# sentence-transformers. MAIA2_CACHE_DIR is a separate location for the
+# raw weight files that maia2's own loader expects.
+# STOCKFISH_PATH points to the Debian-packaged binary.
 ENV MAIA2_CACHE_DIR=/app/maia2_models \
-    HF_HOME=/app/.cache/maia2 \
+    HF_HOME=/app/.cache/hf \
     STOCKFISH_PATH=/usr/games/stockfish
-RUN mkdir -p /app/maia2_models /app/.cache/maia2 && \
-    (python scripts/setup_engines.py || echo "engine pre-warm failed; continuing")
 
-# App runtime
-ENV DATABASE_URL=sqlite:////app/data/metropolis_chess.db \
+RUN mkdir -p /app/maia2_models /app/.cache/hf && \
+    (python scripts/setup_engines.py || echo "[build] Maia-2 pre-warm failed — weights will download on first use") && \
+    (python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'); print('[build] sentence-transformers pre-warm OK')" \
+        || echo "[build] sentence-transformers pre-warm failed — model will download on first use")
+
+# Runtime defaults.
+# DATABASE_URL → HF Spaces persistent volume at /data.
+# REDIS_URL is intentionally empty: single-worker HF deployment uses the in-process fallback.
+# Override DATABASE_URL in docker-compose for local dev (see docker-compose.yml).
+ENV DATABASE_URL=sqlite:////data/metropolis_chess.db \
     LOG_DIR=/app/logs \
-    REDIS_URL=redis://redis:6379/0
-RUN mkdir -p /app/data /app/logs
+    REDIS_URL=""
 
-EXPOSE 8000
+# Create writable directories. /app/logs must be writable by uid 1000 (HF Spaces
+# default runtime user). Model cache dirs are read-only at runtime (pre-baked above).
+# /data is created here so the path exists if no volume is mounted (local dev);
+# on HF Spaces, the persistent volume overlay provides the real writable /data.
+RUN mkdir -p /app/logs /app/data /data && \
+    chmod -R 777 /app/logs /app/data /data
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+EXPOSE 7860
+
+ENTRYPOINT ["/app/entrypoint.sh"]
