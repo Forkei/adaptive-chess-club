@@ -14,9 +14,6 @@
 (function () {
   "use strict";
 
-  // Ambient audio disabled for the demo.
-  return;
-
   // Only run on the lobby page.
   if (!document.body || !document.body.dataset.mpLobbyId) return;
 
