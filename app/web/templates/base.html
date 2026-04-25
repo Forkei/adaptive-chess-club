@@ -282,7 +282,10 @@
 
     /* Phase 4.1 — room backdrop. Full-bleed layer behind content,
        soft-faded so UI panels stay legible. Video/image is injected by
-       the page; this class sizes and dims it. */
+       the page; this class sizes and dims it.
+       body.has-room-backdrop is set when the page has a backdrop image/video.
+       Making the body transparent lets the z-index:-1 element show through
+       (otherwise the body's solid background-color covers it entirely). */
     .mp-room-backdrop {
       position: fixed; inset: 0; z-index: -1; pointer-events: none;
       opacity: 0.22;
@@ -296,6 +299,7 @@
         radial-gradient(1200px 700px at 70% 0%, rgba(0,0,0,0.35), transparent 60%),
         linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0.55));
     }
+    body.has-room-backdrop { background-color: transparent; }
 
     /* Phase 4.1 — header ambient-mute toggle. */
     .mp-ambient-toggle {
@@ -370,7 +374,7 @@
   new values and all our existing mp-* classes retheme automatically.
   `data-theme` is a hook for page CSS that needs per-room rules.
 #}
-<body class="min-h-screen"
+<body class="min-h-screen{% if room and room.background %} has-room-backdrop{% endif %}"
   {% if room and room.slug and room.slug != "default" %}data-theme="{{ room.slug }}"{% endif %}
   {% if room and room.css_vars %}style="{% for k, v in room.css_vars.items() %}{{ k }}: {{ v }};{% endfor %}"{% endif %}>
   {% if room and room.background %}
