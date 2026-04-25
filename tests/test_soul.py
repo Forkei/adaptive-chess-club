@@ -144,6 +144,24 @@ def test_soul_response_accepts_silent_output():
     assert r.referenced_memory_ids == []
 
 
+# --- Prompt content regression: chess-authority rule ----------------------
+
+
+def test_system_prompt_contains_hard_move_prediction_rule():
+    """The 'HARD RULE: NEVER PREDICT YOUR OWN MOVES' block must be present and
+    must appear BEFORE the CHARACTER SHEET so the LLM reads it first."""
+    from app.agents.prompts import build_system_prompt
+
+    prompt = build_system_prompt(_char())
+
+    assert "HARD RULE: NEVER PREDICT YOUR OWN MOVES" in prompt
+    # Positive reinforcement phrasing must be present.
+    assert "You are not the engine" in prompt
+    assert "deflect" in prompt
+    # The rule should appear before the character sheet.
+    assert prompt.index("HARD RULE") < prompt.index("CHARACTER SHEET")
+
+
 def test_soul_prompt_includes_timing_when_supplied():
     """Patch Pass 2 Item 4: timing data must reach the prompt with the
     accuse-slow threshold guidance attached."""
@@ -326,9 +344,13 @@ def test_chess_authority_rules_in_system_prompt():
     assert "engine" in system.lower() and ("pick" in system.lower() or "choos" in system.lower() or "decid" in system.lower()), (
         "System prompt must explain that the ENGINE chooses moves, not the Soul"
     )
-    assert "DO NOT say" in system or "Do not say" in system or "don't say" in system.lower(), (
-        "System prompt must contain a clear prohibition on move-claim phrases"
-    )
+    assert (
+        "DO NOT say" in system
+        or "Do not say" in system
+        or "don't say" in system.lower()
+        or "FORBIDDEN" in system
+        or "never say" in system.lower()
+    ), "System prompt must contain a clear prohibition on move-claim phrases"
 
 
 def test_chess_authority_rule_allows_style_claims():
