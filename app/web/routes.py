@@ -820,7 +820,8 @@ def character_detail(
 ) -> HTMLResponse:
     character = session.get(Character, character_id)
     if character is None or character.deleted_at is not None:
-        raise HTTPException(status_code=404, detail="Character not found")
+        # Stale bookmark from an old ephemeral DB — redirect home instead of 404.
+        return RedirectResponse(url="/", status_code=302)
     if character.visibility == Visibility.PRIVATE and character.owner_id != player.id:
         raise HTTPException(status_code=404, detail="Character not found")
     if not rating_allowed(character.content_rating, player.max_content_rating):
