@@ -8,13 +8,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth import get_optional_player
 from app.config import get_settings
 from app.db import get_session
 from app.models.feedback import Feedback
+from app.models.match import Match, Player
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/web/templates")
@@ -57,6 +58,36 @@ async def submit_feedback(
     db.commit()
 
     return RedirectResponse("/feedback?sent=1", status_code=303)
+
+
+@router.get("/admin/users")
+async def admin_users(request: Request, db: Session = Depends(get_session)):
+    player = get_optional_player(request, db)
+    settings = get_settings()
+    if not settings.admin_username:
+        raise HTTPException(status_code=404)
+    if not player or player.username.lower() != settings.admin_username.lower():
+        raise HTTPException(status_code=403, detail="Not authorised.")
+
+    players = db.execute(
+        select(Player).order_by(Player.created_at.desc())
+    ).scalars().all()
+
+    match_counts = {
+        row[0]: row[1]
+        for row in db.execute(
+            select(Match.player_id, func.count(Match.id))
+            .group_by(Match.player_id)
+        ).all()
+    }
+
+    return templates.TemplateResponse("admin_users.html", {
+        "request": request,
+        "player": player,
+        "players": players,
+        "match_counts": match_counts,
+        "total": len(players),
+    })
 
 
 @router.get("/admin/feedback")

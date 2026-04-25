@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Users — Admin{% endblock %}
+
+{% block content %}
+<div class="mp-enter mp-enter-1">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <div class="mp-eyebrow mb-1">Admin</div>
+      <h1 class="mp-display text-[32px] leading-[1] tracking-tight">
+        Users
+        <span class="text-[var(--mp-ink-muted)] text-[22px]">({{ total }})</span>
+      </h1>
+    </div>
+    <a href="/admin/feedback" class="mp-btn mp-btn-ghost text-[12px]">Feedback →</a>
+  </div>
+
+  {% if not players %}
+  <div class="mp-panel rounded-sm p-8 text-center text-[var(--mp-ink-muted)] text-sm">No users yet.</div>
+  {% else %}
+  <div class="mp-panel rounded-sm overflow-hidden">
+    <table class="w-full text-[13px]">
+      <thead>
+        <tr class="border-b border-[var(--mp-hairline)] text-left">
+          <th class="mp-eyebrow px-4 py-3">Username</th>
+          <th class="mp-eyebrow px-4 py-3">Display name</th>
+          <th class="mp-eyebrow px-4 py-3">Matches</th>
+          <th class="mp-eyebrow px-4 py-3">Rating</th>
+          <th class="mp-eyebrow px-4 py-3">Joined</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in players %}
+        <tr class="border-b border-[var(--mp-hairline)] last:border-0 hover:bg-[var(--mp-surface-2)] transition">
+          <td class="px-4 py-3 mp-mono text-[var(--mp-brass)]">@{{ p.username }}</td>
+          <td class="px-4 py-3 text-[var(--mp-ink-muted)]">{{ p.display_name or '—' }}</td>
+          <td class="px-4 py-3 text-[var(--mp-ink-muted)] mp-mono">{{ match_counts.get(p.id, 0) }}</td>
+          <td class="px-4 py-3 text-[var(--mp-ink-faint)]">{{ p.max_content_rating or '—' }}</td>
+          <td class="px-4 py-3 text-[var(--mp-ink-faint)] mp-mono text-[11px]">
+            {{ p.created_at.strftime('%Y-%m-%d') if p.created_at else '—' }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
