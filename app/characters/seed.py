@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from datetime import datetime
 
 from sqlalchemy import select
@@ -15,6 +16,14 @@ from sqlalchemy import select
 from app.characters.presets import PRESETS, PresetSpec
 from app.db import session_scope
 from app.models.character import Character, CharacterState
+
+# Fixed namespace for stable preset UUIDs — never change this.
+_PRESET_NS = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+
+def _preset_id(preset_key: str) -> str:
+    """Deterministic UUID derived from preset_key — survives DB resets."""
+    return str(uuid.uuid5(_PRESET_NS, preset_key))
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +40,7 @@ def _upsert_preset(spec: PresetSpec) -> tuple[str, bool]:
         from app.models.character import Visibility
 
         char = Character(
+            id=_preset_id(spec.preset_key),
             name=spec.name,
             short_description=spec.short_description,
             backstory=spec.backstory,
