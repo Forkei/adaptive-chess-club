@@ -22,8 +22,10 @@ templates = Jinja2Templates(directory="app/web/templates")
 
 
 @router.get("/feedback")
-async def feedback_page(request: Request, db: Session = Depends(get_session)):
-    player = get_optional_player(request, db)
+async def feedback_page(
+    request: Request,
+    player: Player | None = Depends(get_optional_player),
+):
     return templates.TemplateResponse("feedback.html", {
         "request": request,
         "player": player,
@@ -36,13 +38,13 @@ async def submit_feedback(
     request: Request,
     text: str = Form(...),
     rating: str = Form(""),
+    player: Player | None = Depends(get_optional_player),
     db: Session = Depends(get_session),
 ):
     text = text.strip()[:2000]
     if not text:
         raise HTTPException(status_code=422, detail="Feedback text required.")
 
-    player = get_optional_player(request, db)
     rating_int = int(rating) if rating.strip() and rating.strip().isdigit() and 1 <= int(rating) <= 5 else None
     referer = request.headers.get("referer", "")
 
@@ -61,8 +63,11 @@ async def submit_feedback(
 
 
 @router.get("/admin/users")
-async def admin_users(request: Request, db: Session = Depends(get_session)):
-    player = get_optional_player(request, db)
+async def admin_users(
+    request: Request,
+    player: Player | None = Depends(get_optional_player),
+    db: Session = Depends(get_session),
+):
     settings = get_settings()
     if not settings.admin_username:
         raise HTTPException(status_code=404)
@@ -94,9 +99,9 @@ async def admin_users(request: Request, db: Session = Depends(get_session)):
 async def admin_feedback(
     request: Request,
     format: str = "",
+    player: Player | None = Depends(get_optional_player),
     db: Session = Depends(get_session),
 ):
-    player = get_optional_player(request, db)
     settings = get_settings()
 
     if not settings.admin_username:
