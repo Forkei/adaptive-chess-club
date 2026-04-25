@@ -14,7 +14,7 @@ from sqlalchemy import engine_from_config, pool
 
 # Import the app's models so their metadata is populated before we read it.
 from app.config import get_settings
-from app.models import character, match, memory  # noqa: F401 — register tables
+from app.models import character, feedback, match, memory  # noqa: F401 — register tables
 from app.models.base import Base
 
 config = context.config

@@ -20,6 +20,7 @@ from app.db import init_db
 from app.logging_config import configure_logging
 from app.sockets import build_asgi_app
 from app.sockets.bridge import set_main_loop
+from app.web.feedback_routes import router as feedback_router
 from app.web.lobby_routes import router as lobby_router
 from app.web.routes import router as web_router
 
@@ -106,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(players_api)
     app.include_router(matches_api)
     app.include_router(discovery_api)
+    app.include_router(feedback_router)
     app.include_router(lobby_router)
     app.include_router(web_router)
 

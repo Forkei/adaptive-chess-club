@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Feedback — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="max-w-lg mx-auto mt-10 mp-enter mp-enter-1">
+  <div class="mp-eyebrow mb-2">Tell us what you think</div>
+  <h1 class="mp-display text-[34px] leading-[1] tracking-tight mb-2">Send feedback</h1>
+  <p class="text-[13px] text-[var(--mp-ink-muted)] mb-8">
+    Bugs, ideas, impressions — all welcome. Anonymous if you prefer.
+  </p>
+
+  {% if sent %}
+  <div class="mb-6 rounded-sm border p-4 text-sm" style="border-color:rgba(79,164,141,0.4);background:rgba(79,164,141,0.08);color:var(--mp-felt-bright);">
+    Thanks — your feedback was received.
+  </div>
+  {% endif %}
+
+  <form method="post" action="/feedback" class="space-y-6 mp-panel rounded-sm p-6 mp-framed relative">
+    <span class="mp-frame-tl"></span><span class="mp-frame-br"></span>
+
+    <div>
+      <label class="mp-eyebrow block mb-2">Your feedback <span style="color:var(--mp-oxblood)">*</span></label>
+      <textarea
+        name="text"
+        required
+        rows="5"
+        maxlength="2000"
+        placeholder="What's working, what's broken, what's missing…"
+        class="mp-input w-full resize-y"
+        style="min-height:120px"
+      ></textarea>
+    </div>
+
+    <div>
+      <label class="mp-eyebrow block mb-2">Rating <span style="color:var(--mp-ink-ghost)">(optional)</span></label>
+      <div class="flex gap-2">
+        {% for n in [1,2,3,4,5] %}
+        <label class="flex flex-col items-center gap-1 cursor-pointer group">
+          <input type="radio" name="rating" value="{{ n }}" class="sr-only peer" />
+          <span class="w-9 h-9 flex items-center justify-center rounded-sm border border-[var(--mp-hairline-2)]
+                        text-[var(--mp-ink-muted)] text-sm font-mono
+                        peer-checked:border-[var(--mp-brass)] peer-checked:text-[var(--mp-brass)] peer-checked:bg-[rgba(201,166,107,0.08)]
+                        group-hover:border-[var(--mp-brass-dim)] group-hover:text-[var(--mp-ink)]
+                        transition cursor-pointer">{{ n }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <p class="text-[11px] text-[var(--mp-ink-faint)] mt-1">1 = rough, 5 = great</p>
+    </div>
+
+    {% if player %}
+    <p class="text-[12px] text-[var(--mp-ink-muted)]">
+      Submitting as <span class="text-[var(--mp-ink)]">@{{ player.username }}</span>.
+    </p>
+    {% else %}
+    <p class="text-[12px] text-[var(--mp-ink-muted)]">
+      You're not logged in — your feedback will be anonymous.
+      <a href="/login?next=/feedback" class="mp-link">Log in</a>
+    </p>
+    {% endif %}
+
+    <button type="submit" class="mp-btn mp-btn-brass w-full justify-center" style="padding:0.65rem 1rem;">
+      Send feedback ›
+    </button>
+  </form>
+</div>
+{% endblock %}

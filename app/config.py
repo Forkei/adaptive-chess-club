@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # disabled unless this env var is set. Tests flip it to True in their scope.
     allow_character_api: bool = False
 
+    # Username (case-insensitive) allowed to access /admin/feedback.
+    # Defaults to the project owner; set to "" to disable the admin view.
+    admin_username: str = "forkei"
+
     @property
     def log_path(self) -> Path:
         p = Path(self.log_dir)
