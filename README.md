@@ -1,3 +1,13 @@
+---
+title: Metropolis Chess Club
+emoji: ♞
+colorFrom: indigo
+colorTo: amber
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Metropolis Chess Club
 
 A chess-playing AI character platform. Users create or pick an AI opponent — each with its own backstory, personality sliders, opening preferences, and lived-in memories — then play against it with real-time chat.
@@ -297,6 +307,39 @@ It overwrites only `opening_preferences` on matching preset rows. Memories, Elo 
 alembic stamp head
 ```
 Or, if you've deleted `metropolis_chess.db` and want Alembic as the sole creation path, run `alembic upgrade head` before starting the app — the 0001 baseline is a no-op, and 0002 is idempotent against already-materialized columns.
+
+## Deploying to Hugging Face Spaces
+
+This repo ships as a Docker SDK Space. Create a Space at `huggingface.co/new-space`, choose **Docker** as the SDK, then add this repo as the Space's git remote:
+
+```bash
+# Replace <username> and <space-name> with your HF username and chosen Space name.
+git remote add hf https://huggingface.co/spaces/<username>/<space-name>
+git push hf main
+```
+
+The first push triggers a build (10–20 min — Maia-2 + torch download). Watch progress in the Space's **Logs** tab.
+
+### Space Secrets (set in Space Settings → Variables and Secrets)
+
+| Variable | Required | Description |
+|---|---|---|
+| `GEMINI_API_KEY` | **Yes** | Google Gemini API key for Kenji's Soul + memory generation. Without it the app runs but presets seed without memories and Kenji is silent. |
+| `SESSION_SECRET` | Recommended | Arbitrary secret string for session cookie integrity. Defaults to empty (unsigned cookies — fine for a test deployment). |
+
+### Variables with baked-in defaults (no action required)
+
+| Variable | Default in image | Notes |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:////data/metropolis_chess.db` | SQLite on HF persistent storage (`/data`). Survives Space restarts. |
+| `REDIS_URL` | *(empty)* | No Redis on HF Spaces. The app falls back to in-process mood/cache state — fine for single-worker. |
+| `STOCKFISH_PATH` | `/usr/games/stockfish` | Installed via `apt` in the image. |
+| `MAIA2_CACHE_DIR` | `/app/maia2_models` | Weights pre-downloaded into the image at build time. |
+| `LOG_DIR` | `/app/logs` | Logs also stream to stdout, which HF captures in the Logs tab. |
+
+### WebSocket note
+
+HF Spaces Docker supports WebSockets. The Socket.IO transport layer negotiates WebSocket by default and falls back to long-polling automatically — both paths work, WebSocket is faster. If you see `transport=polling` in the browser DevTools network tab, long-polling is active; gameplay still works but chat responsiveness is reduced.
 
 ## License
 
