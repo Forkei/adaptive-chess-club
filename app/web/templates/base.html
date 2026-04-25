@@ -392,12 +392,9 @@
         <span class="mp-display text-[19px] tracking-tight">Metropolis <span class="mp-italic text-[var(--mp-ink-muted)]">Chess Club</span></span>
       </a>
       <nav class="text-[13px] text-[var(--mp-ink-muted)] space-x-5 flex items-center">
-        {# Ambient audio disabled for the demo — toggle hidden. #}
-        {% if false %}
         <button id="mp-ambient-toggle" class="mp-ambient-toggle" data-muted="true" aria-pressed="false" aria-label="Toggle room audio">
           <span aria-hidden="true">♪̸</span>
         </button>
-        {% endif %}
         {% if player %}
         <details class="mp-user-menu">
           <summary title="Account menu">@{{ player.username }}</summary>

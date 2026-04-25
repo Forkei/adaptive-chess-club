@@ -216,8 +216,7 @@
       {% endif %}
     </div>
 
-    {# Radio removed for the demo — ambient audio is off. #}
-    {% if false %}
+    {# Radio widget #}
     <div class="radio">
       <div class="flex items-center justify-between">
         <div class="mp-eyebrow" style="color: var(--mp-brass-bright);">Radio</div>
@@ -238,7 +237,6 @@
         <input id="music-volume" type="range" min="0" max="1" step="0.05" value="{{ lobby.music_volume }}" />
       </div>
     </div>
-    {% endif %}
 
     {# Tabletop clock #}
     <div class="mp-room-wall flex items-center gap-4">
