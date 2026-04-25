@@ -365,3 +365,67 @@ def test_llm_rerank_skipped_when_margin_large(_stub_embed_text):
         # is skipped.
         # But at minimum: if called it must have been called exactly once.
         assert calls["n"] <= 1
+
+
+# --- Regression: opponent-specific memory with match_id=None surfaces --------
+
+
+def test_opponent_specific_room_memory_surfaces(_stub_embed_text):
+    """Regression for Issue 1: a memory saved from the pre-match room
+    (match_id=None, scope=OPPONENT_SPECIFIC) must appear in Subconscious
+    retrieval when that same player asks a related question in a later session.
+
+    Root cause that was fixed: vector_store.search was called without player_id,
+    so as the character corpus grows, the current player's opponent-specific
+    memories can be crowded out of the CANDIDATE_POOL by other players' memories.
+    Passing player_id=current_player_id ensures they are always candidates.
+    """
+    with SessionLocal() as s:
+        char = _make_character(s)
+
+        # Simulate a large corpus of character-lore memories for another player
+        # so they'd crowd the candidate pool if filtering is absent.
+        other_player_id = "other-player-id"
+        for i in range(20):
+            _make_memory(
+                s,
+                character_id=char.id,
+                narrative=f"board prose opening variation move center pawn {i}",
+                triggers=["opening", "center"],
+                player_id=other_player_id,
+                scope=MemoryScope.OPPONENT_SPECIFIC,
+                embedding=_fake_embed(f"board prose opening variation move center pawn {i}"),
+            )
+
+        # The key memory: saved from room chat, match_id=None (inline save).
+        target_player_id = "target-player-id"
+        rating_memory = _make_memory(
+            s,
+            character_id=char.id,
+            narrative="The player claims to be rated 1900 on chess.com which is fairly strong.",
+            triggers=["1900", "chess.com", "rating"],
+            player_id=target_player_id,
+            scope=MemoryScope.OPPONENT_SPECIFIC,
+            embedding=_fake_embed("The player claims to be rated 1900 on chess.com which is fairly strong."),
+        )
+
+        inp = SubconsciousInput(
+            character_id=char.id,
+            match_id="chat:fresh-session",
+            current_turn=2,
+            board_summary=_board_summary_for(),
+            mood=_mood_steady(),
+            last_player_uci=None,
+            last_player_chat="what is my rating",
+            last_moves_san=[],
+            recent_chat=[],
+            opening_label=None,
+            current_player_id=target_player_id,
+        )
+        surfaced = run_subconscious(s, char, inp)
+
+    surfaced_ids = {sm.memory_id for sm in surfaced}
+    assert rating_memory.id in surfaced_ids, (
+        "Opponent-specific room memory (match_id=None) must surface when the same player "
+        "asks a related question. Check that vector_store.search passes player_id."
+    )

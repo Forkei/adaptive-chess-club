@@ -410,16 +410,25 @@ def run_subconscious(
             query_embedding=query_vec,
             k=CANDIDATE_POOL,
             character_id=inp.character_id,
+            # Restrict to memories for the current player (or no specific player, i.e. character
+            # lore / cross-player). Without this filter, opponent-specific memories for *other*
+            # players compete for the CANDIDATE_POOL slots and can crowd out the current player's
+            # memories as the corpus grows — even though those other-player memories score 0 on
+            # opponent_relevance and would never surface anyway.
+            player_id=inp.current_player_id,
         )
         semantic_by_id: dict[str, float] = {h.memory_id: h.score for h in hits}
         candidate_ids = list(semantic_by_id.keys())
     else:
-        # No vector — fall back to all memories for this character.
+        # No vector — fall back to all memories for this character/player.
         from sqlalchemy import select
         from app.models.memory import Memory as _Mem
-        rows = list(
-            session.execute(select(_Mem).where(_Mem.character_id == inp.character_id)).scalars()
-        )
+        stmt = select(_Mem).where(_Mem.character_id == inp.character_id)
+        if inp.current_player_id is not None:
+            stmt = stmt.where(
+                (_Mem.player_id == inp.current_player_id) | (_Mem.player_id.is_(None))
+            )
+        rows = list(session.execute(stmt).scalars())
         candidate_ids = [r.id for r in rows]
         semantic_by_id = {cid: 0.0 for cid in candidate_ids}
 

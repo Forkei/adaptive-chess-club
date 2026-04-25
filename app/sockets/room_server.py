@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from http.cookies import SimpleCookie
 from typing import Any
@@ -37,6 +38,8 @@ from app.db import SessionLocal
 from app.models.character import Character, CharacterState, Visibility, rating_allowed
 from app.models.chat import CharacterChatSession, ChatSessionStatus
 from app.models.match import Player
+from app.config import get_settings
+from app.memory.inline_save import save_inline_memory
 from app.schemas.agents import SoulResponse
 from app.sockets.server import sio
 
@@ -58,6 +61,8 @@ S2C_AGENT_THINKING = "agent_thinking"
 S2C_AGENT_CHAT = "agent_chat"
 S2C_AGENT_ERROR = "agent_error"
 S2C_GAME_STARTED = "game_started"
+S2C_GREETING_DONE = "greeting_done"
+S2C_PLAYER_CHAT_RATE_LIMITED = "player_chat_rate_limited"
 S2C_ERROR = "error"
 
 
@@ -95,6 +100,28 @@ async def _send_error(sid: str, code: str, message: str) -> None:
         to=sid,
         namespace=ROOM_NAMESPACE,
     )
+
+
+# Per-SID rate-limit tracker. Keyed by socket ID so no save_session await
+# is needed, which avoids a yield-before-ack timing issue with the greeting task.
+_room_chat_last_ms: dict[str, int] = {}
+
+
+def _room_rate_limit_ok(sid: str) -> tuple[bool, int]:
+    """Token-spacing check for the /room namespace. Returns (ok, retry_after_ms).
+
+    Uses a module-level dict instead of sio_session so no await is needed,
+    which keeps player_chat_ack emitted before the greeting task can fire
+    agent_thinking.
+    """
+    min_interval_ms = int(get_settings().player_chat_min_interval_ms)
+    now_ms = int(time.monotonic() * 1000)
+    last = _room_chat_last_ms.get(sid, 0)
+    delta = now_ms - last
+    if delta < min_interval_ms:
+        return False, min_interval_ms - delta
+    _room_chat_last_ms[sid] = now_ms
+    return True, 0
 
 
 # --- Connect / disconnect --------------------------------------------------
@@ -189,18 +216,19 @@ async def _on_connect(sid, environ, auth):
         sid, player_id, character_id, chat_session_id,
     )
 
-    # Greeting: fires asynchronously AFTER room_state so it never blocks the
-    # handshake. The greeting race (Block 3) is unchanged — we just moved the
-    # trigger from HTTP GET to here without adding any lock.
+    # Greeting: fires asynchronously so it never blocks the handshake.
+    # _locked_fire_greeting acquires chat_session_lock before running so
+    # two simultaneous connects to an empty session yield exactly one greeting.
     if is_empty:
         asyncio.create_task(
-            _fire_greeting(chat_session_id, character_id, player_id),
+            _locked_fire_greeting(chat_session_id, character_id, player_id),
             name=f"greeting-{chat_session_id}",
         )
 
 
 @sio.on("disconnect", namespace=ROOM_NAMESPACE)
 async def _on_disconnect(sid):
+    _room_chat_last_ms.pop(sid, None)
     try:
         sess = await sio.get_session(sid, namespace=ROOM_NAMESPACE)
     except KeyError:
@@ -223,37 +251,107 @@ def maybe_character_greets(*args, **kwargs):
 async def _fire_greeting(chat_session_id: str, character_id: str, player_id: str) -> None:
     """Run the character greeting asynchronously after room_state is sent.
 
-    Uses asyncio.to_thread so the synchronous Soul/Subconscious calls don't
-    block the event loop. Any greeting turn will arrive at the client as an
-    agent_chat event (since it's appended to the session, not included in
-    the initial room_state).
+    Emits agent_thinking {source: "greeting"} immediately so the client
+    disables input and knows the character is about to speak first. When the
+    LLM pipeline completes, emits either agent_chat (character spoke) or
+    greeting_done (character stayed silent / player already sent a message).
+    greeting_done is the definitive "greeting phase over" signal.
     """
-    def _greet_sync():
-        with SessionLocal() as s:
-            chat_session = s.get(CharacterChatSession, chat_session_id)
-            character = s.get(Character, character_id)
-            player = s.get(Player, player_id)
-            if chat_session is None or character is None or player is None:
-                return None
-            return maybe_character_greets(s, chat_session, character, player)
+    room = chat_room(chat_session_id)
 
+    await sio.emit(
+        S2C_AGENT_THINKING,
+        {"source": "greeting"},
+        room=room,
+        namespace=ROOM_NAMESPACE,
+    )
+
+    greeted = False
     try:
+        def _greet_sync():
+            with SessionLocal() as s:
+                chat_session = s.get(CharacterChatSession, chat_session_id)
+                character = s.get(Character, character_id)
+                player = s.get(Player, player_id)
+                if chat_session is None or character is None or player is None:
+                    return None
+                return maybe_character_greets(s, chat_session, character, player)
+
         turn = await asyncio.to_thread(_greet_sync)
+
+        if turn is not None:
+            greeted = True
+            await sio.emit(
+                S2C_AGENT_CHAT,
+                {
+                    "text": turn.text,
+                    "emotion": turn.emotion,
+                    "emotion_intensity": turn.emotion_intensity,
+                    "game_action": turn.game_action,
+                    "source": "greeting",
+                },
+                room=room,
+                namespace=ROOM_NAMESPACE,
+            )
     except Exception:
         logger.exception("[room] greeting failed for session=%s (non-fatal)", chat_session_id)
-        return
 
-    if turn is not None:
-        await sio.emit(
-            S2C_AGENT_CHAT,
-            {
-                "text": turn.text,
-                "emotion": turn.emotion,
-                "emotion_intensity": turn.emotion_intensity,
-                "game_action": turn.game_action,
-            },
-            room=chat_room(chat_session_id),
-            namespace=ROOM_NAMESPACE,
+    if not greeted:
+        # Character stayed silent (probability miss, player beat us, or failure).
+        # Signal the client so it unlocks the input.
+        await sio.emit(S2C_GREETING_DONE, {}, room=room, namespace=ROOM_NAMESPACE)
+
+
+async def _locked_fire_greeting(
+    chat_session_id: str, character_id: str, player_id: str
+) -> None:
+    """Greeting entry point used by _on_connect.
+
+    Acquires chat_session_lock before checking whether a greeting is still
+    needed. Two simultaneous connects (two tabs, same session) both create a
+    task here; only the first finds an empty session and proceeds. The second
+    acquires the lock after the first finishes, sees a greeting turn already
+    persisted, and returns early — emitting nothing extra to the room.
+    """
+    from app.concurrency.locks import chat_session_lock
+
+    async with chat_session_lock(chat_session_id):
+        with SessionLocal() as s:
+            from app.characters.chat_service import get_turns
+            cs = s.get(CharacterChatSession, chat_session_id)
+            if cs is None:
+                return
+            if get_turns(s, cs):
+                return  # Another connect already greeted.
+        await _fire_greeting(chat_session_id, character_id, player_id)
+
+
+async def _run_pipeline_locked(
+    *,
+    chat_session_id: str,
+    character_id: str,
+    player_id: str,
+    player_text: str,
+) -> None:
+    """Serialize consecutive player_chat pipelines via chat_session_lock.
+
+    Acquires the same lock as _locked_fire_greeting so a greeting in flight
+    cannot interleave with a chat pipeline, and vice versa. If two messages
+    arrive before the first pipeline commits, the second queues behind the
+    first and runs in order — correct serial state, no racy mood/note writes.
+
+    Starvation note: if a pipeline takes 8 s and three messages queue up,
+    they process serially over 24 s. Correct behavior; the 30 s LLM timeout
+    inside run_room_agent_pipeline is the backstop against infinite queuing.
+    """
+    from app.concurrency.locks import chat_session_lock
+
+    async with chat_session_lock(chat_session_id):
+        await run_room_agent_pipeline(
+            chat_session_id=chat_session_id,
+            character_id=character_id,
+            player_id=player_id,
+            player_text=player_text,
         )
 
 
@@ -280,6 +378,17 @@ async def _on_player_chat(sid, data):
         await _send_error(sid, "bad_payload", "Empty message.")
         return
 
+    # Rate limit: max 1 message per PLAYER_CHAT_MIN_INTERVAL_MS per socket.
+    ok, retry_after = _room_rate_limit_ok(sid)
+    if not ok:
+        await sio.emit(
+            S2C_PLAYER_CHAT_RATE_LIMITED,
+            {"retry_after_ms": retry_after},
+            to=sid,
+            namespace=ROOM_NAMESPACE,
+        )
+        return
+
     # Persist player turn immediately, emit ack, then fire background pipeline.
     with SessionLocal() as session:
         chat_session = session.get(CharacterChatSession, chat_session_id)
@@ -300,12 +409,13 @@ async def _on_player_chat(sid, data):
     )
 
     asyncio.create_task(
-        run_room_agent_pipeline(
+        _run_pipeline_locked(
             chat_session_id=chat_session_id,
             character_id=character_id,
             player_id=player_id,
             player_text=text,
-        )
+        ),
+        name=f"pipeline-{chat_session_id}",
     )
 
 
@@ -358,6 +468,28 @@ async def run_room_agent_pipeline(
         board = _idle_board_summary()
         mood = _load_or_init_chat_mood(session, chat_session, session.get(Character, character_id))
 
+        # Load the opponent profile so Soul doesn't see "First time playing this opponent"
+        # when there are already memories / match history for this player.
+        from sqlalchemy import select as _select_room
+        from app.models.match import OpponentProfile as _OpponentProfile
+        _prof = session.execute(
+            _select_room(_OpponentProfile)
+            .where(_OpponentProfile.character_id == character_id)
+            .where(_OpponentProfile.player_id == player_id)
+        ).scalar_one_or_none()
+        opponent_profile_summary: dict | None = None
+        head_to_head: dict | None = None
+        if _prof and _prof.games_played > 0:
+            opponent_profile_summary = {
+                "games_played": _prof.games_played,
+                "narrative": _prof.narrative_summary or "(few interactions so far)",
+            }
+            head_to_head = {
+                "character_wins": _prof.games_won_by_character,
+                "character_losses": _prof.games_lost_by_character,
+                "draws": _prof.games_drawn,
+            }
+
         sub_input = SubconsciousInput(
             character_id=character_id,
             match_id=f"chat:{chat_session_id}",
@@ -370,7 +502,7 @@ async def run_room_agent_pipeline(
             recent_chat=recent_chat + [f"player: {player_text}"],
             opening_label=None,
             current_player_id=player_id,
-            opponent_style_features=None,
+            opponent_style_features=_prof.style_features if _prof else None,
         )
 
     # --- Subconscious -------------------------------------------------------
@@ -383,7 +515,7 @@ async def run_room_agent_pipeline(
                     return []
                 return run_subconscious(s, char, sub_input) or []
 
-        surfaced = await asyncio.to_thread(_sub_call)
+        surfaced = await asyncio.wait_for(asyncio.to_thread(_sub_call), timeout=30.0)
     except Exception:
         logger.exception("[room] subconscious failed for session=%s", chat_session_id)
 
@@ -406,8 +538,8 @@ async def run_room_agent_pipeline(
                     engine_time_ms=None,
                     move_number=0,
                     game_phase="pre-match",
-                    opponent_profile_summary=None,
-                    head_to_head=None,
+                    opponent_profile_summary=opponent_profile_summary,
+                    head_to_head=head_to_head,
                     player_just_spoke=True,
                     last_player_chat=player_text,
                     match_id=f"chat:{chat_session_id}",
@@ -415,7 +547,7 @@ async def run_room_agent_pipeline(
                 )
                 return run_soul(char, soul_input)
 
-        soul_resp: SoulResponse = await asyncio.to_thread(_soul_call)
+        soul_resp: SoulResponse = await asyncio.wait_for(asyncio.to_thread(_soul_call), timeout=30.0)
     except Exception:
         logger.exception("[room] soul failed for session=%s", chat_session_id)
         soul_resp = SoulResponse(speak=None, emotion="neutral", emotion_intensity=0.2)
@@ -450,6 +582,17 @@ async def run_room_agent_pipeline(
 
     except Exception:
         logger.exception("[room] character turn persist failed for session=%s", chat_session_id)
+
+    # --- Inline memory (fire-and-forget) -------------------------------------
+    if soul_resp.save_memory:
+        asyncio.create_task(
+            save_inline_memory(
+                soul_resp.save_memory,
+                character_id=character_id,
+                player_id=player_id,
+                match_id=None,
+            )
+        )
 
     # --- Emit agent_chat -----------------------------------------------------
     await sio.emit(
