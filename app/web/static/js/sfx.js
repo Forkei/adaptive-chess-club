@@ -169,8 +169,21 @@
   document.addEventListener("click", (ev) => {
     const t = ev.target.closest && ev.target.closest("#mp-ambient-toggle");
     if (!t) return;
-    // ambient.js / synth_ambient.js updates the localStorage on the same
-    // key; just re-sync our master gain after the next tick.
+    // On pages with ambient.js/synth_ambient.js those scripts own the
+    // localStorage update and button UI. sfx.js just re-syncs its gain.
+    // On pages without ambient audio (login, signup, discovery…) no
+    // ambient script loads, so sfx.js must handle the full toggle.
+    if (!document.getElementById("mp-ambient") && !window.MpAmbient) {
+      const next = !savedMuted();
+      localStorage.setItem(MUTED_KEY, String(next));
+      t.dataset.muted = String(next);
+      t.setAttribute("aria-pressed", String(!next));
+      t.title = next ? "Unmute sounds" : "Mute sounds";
+      t.innerHTML = next ? '<span aria-hidden="true">🔇</span>' : '<span aria-hidden="true">🔊</span>';
+      setMuted(next);
+      return;
+    }
+    // ambient.js / synth_ambient.js updated localStorage; re-sync our gain.
     setTimeout(() => setMuted(savedMuted()), 0);
   }, true);
 
