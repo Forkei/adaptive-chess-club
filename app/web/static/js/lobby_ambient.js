@@ -113,7 +113,7 @@
       if (toggle) {
         toggle.dataset.muted = "false";
         toggle.setAttribute("aria-pressed", "true");
-        toggle.innerHTML = '<span aria-hidden="true">♪</span>';
+        toggle.innerHTML = '<span aria-hidden="true">🔊</span>';
       }
     }
     if (!savedMuted()) { attemptPlay(); startAccents(); }

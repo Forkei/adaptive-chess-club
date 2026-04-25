@@ -65,8 +65,8 @@
     toggle.setAttribute("aria-pressed", String(!muted));
     toggle.title = muted ? "Unmute room audio" : "Mute room audio";
     toggle.innerHTML = muted
-      ? '<span aria-hidden="true">♪̸</span>'
-      : '<span aria-hidden="true">♪</span>';
+      ? '<span aria-hidden="true">🔇</span>'
+      : '<span aria-hidden="true">🔊</span>';
   }
 
   function ensureStarted() {
