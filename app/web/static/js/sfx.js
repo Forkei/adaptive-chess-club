@@ -158,12 +158,10 @@
   window.addEventListener("pointerdown", unlock, true);
   window.addEventListener("keydown", unlock, true);
 
-  // Hover on buttons → subtle click-anticipation sound. Disabled for
-  // the demo — the constant ticking on mouse-over felt noisy.
-  // document.addEventListener("mouseover", (ev) => {
-  //   const t = ev.target.closest && ev.target.closest(".mp-btn, [data-sfx-hover]");
-  //   if (t) play("hover", { volume: 0.35 });
-  // }, { passive: true });
+  document.addEventListener("mouseover", (ev) => {
+    const t = ev.target.closest && ev.target.closest(".mp-btn, [data-sfx-hover]");
+    if (t) play("hover", { volume: 0.35 });
+  }, { passive: true });
 
   // Listen to the ambient mute toggle and mirror state so nav toggle
   // silences SFX too.
