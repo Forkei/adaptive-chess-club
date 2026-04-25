@@ -71,6 +71,14 @@ def _viktor_clips() -> dict[str, str]:
     return {e: f"{base}/{e}.mp4" for e in EMOTIONS}
 
 
+def _kenji_clips() -> dict[str, str]:
+    """Kenji emotion clips shipped as MP4s under
+    /static/characters/kenji_sato/emotions/. Mapped from the supplied
+    reel so every Soul emotion has a reasonable visual match."""
+    base = "/static/characters/kenji_sato/emotions"
+    return {e: f"{base}/{e}.mp4" for e in EMOTIONS}
+
+
 VIKTOR_ROOM = RoomTheme(
     slug="viktor_petrov",
     display_name="Viktor Petrov",
@@ -87,7 +95,10 @@ VIKTOR_ROOM = RoomTheme(
         "--mp-brass-dim":   "#8A5A30",
         "--mp-oxblood":     "#B53A36",
     },
-    ambient_track="/static/characters/viktor_petrov/ambient.mp3",
+    # No recorded track shipped — falls through to synth_ambient.js which
+    # generates a room-specific pad in the browser. Set to a real path to
+    # switch to file playback.
+    ambient_track=None,
     background="/static/characters/viktor_petrov/background.webp",
     background_kind="image",
     emotion_clips=_viktor_clips(),
@@ -111,7 +122,7 @@ MARGOT_ROOM = RoomTheme(
         "--mp-felt":        "#3C7F6F",
         "--mp-felt-bright": "#6FC0A8",
     },
-    ambient_track="/static/characters/margot_lindqvist/ambient.mp3",
+    ambient_track=None,
     background="/static/characters/margot_lindqvist/background.webp",
     background_kind="image",
     emotion_clips={},
@@ -135,10 +146,10 @@ KENJI_ROOM = RoomTheme(
         "--mp-ink-blue":    "#7AA7FF",
         "--mp-ink-blue-alt":"#A8C3FF",
     },
-    ambient_track="/static/characters/kenji_sato/ambient.mp3",
+    ambient_track="/static/audio/ambient/coffee_shop.ogg",
     background="/static/characters/kenji_sato/background.webp",
     background_kind="image",
-    emotion_clips={},
+    emotion_clips=_kenji_clips(),
 )
 
 
@@ -157,7 +168,7 @@ ARCHIBALD_ROOM = RoomTheme(
         "--mp-brass-bright":"#E8CDA3",
         "--mp-brass-dim":   "#8F7A54",
     },
-    ambient_track="/static/characters/archibald_finch/ambient.mp3",
+    ambient_track=None,
     background="/static/characters/archibald_finch/background.webp",
     background_kind="image",
     emotion_clips={},
