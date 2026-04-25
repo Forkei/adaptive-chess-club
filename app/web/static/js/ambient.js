@@ -39,8 +39,8 @@
     toggle.setAttribute("aria-pressed", String(!muted));
     toggle.title = muted ? "Unmute room audio" : "Mute room audio";
     toggle.innerHTML = muted
-      ? '<span aria-hidden="true">♪̸</span>'
-      : '<span aria-hidden="true">♪</span>';
+      ? '<span aria-hidden="true">🔇</span>'
+      : '<span aria-hidden="true">🔊</span>';
   }
 
   function startPlaying() {
@@ -68,10 +68,21 @@
   // browsers that blocked initial autoplay pick up once the user interacts.
   // Fix 4 (demo-rescue): if the user has no stored mute preference, also
   // implicitly unmute — otherwise the audio plays silently and looks
-  // broken. A click on ♪̸ still wins since it sets the localStorage key.
-  function onFirstGesture() {
-    if (localStorage.getItem(MUTED_KEY) === null) setMuted(false);
-    startPlaying();
+  // broken.
+  //
+  // Race-guard: if the first gesture IS a click on the mute toggle, skip
+  // the auto-unmute and let the toggle's click handler win. Without this,
+  // pointerdown fires onFirstGesture (setMuted(false)) and then the click
+  // event fires the toggle handler (setMuted(true)) — net result: muted
+  // and the button appears to do nothing.
+  function onFirstGesture(ev) {
+    const onToggle = ev && ev.target && typeof ev.target.closest === "function"
+      && ev.target.closest("#mp-ambient-toggle");
+    if (!onToggle && localStorage.getItem(MUTED_KEY) === null) {
+      setMuted(false);  // auto-unmute; startPlaying() called inside
+    } else if (!muted) {
+      startPlaying();   // already unmuted from prior session — (re)start
+    }
     window.removeEventListener("pointerdown", onFirstGesture, true);
     window.removeEventListener("keydown", onFirstGesture, true);
   }
