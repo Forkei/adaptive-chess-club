@@ -13,16 +13,18 @@
  */
 (function () {
   "use strict";
+
+  // Mutual-exclusion guards — must be the first checks so we bail before
+  // allocating any AudioContext resources.
+  // base.html only loads this file when room.ambient_track is falsy, so under
+  // normal routing this is belt-and-suspenders.  It matters if both scripts
+  // are accidentally loaded on the same page.
+  if (document.getElementById("mp-ambient")) return; // file-based ambient active
+  if (document.body && document.body.dataset && document.body.dataset.mpLobbyId) return; // lobby_ambient.js owns this page
+
   const MUTED_KEY = "mp_ambient_muted";
   const VOL_KEY = "mp_ambient_volume";
   const BASE_VOL = 0.28;
-
-  // If a real <audio> element is present, let ambient.js drive it and
-  // bail out. The two scripts are mutually exclusive.
-  if (document.getElementById("mp-ambient")) return;
-  // Lobby uses its own layered ambient bed (lobby_ambient.js). Don't
-  // double up with a synth pad underneath.
-  if (document.body && document.body.dataset && document.body.dataset.mpLobbyId) return;
 
   const toggle = document.getElementById("mp-ambient-toggle");
   const theme = (document.body && document.body.dataset && document.body.dataset.theme) || "default";
