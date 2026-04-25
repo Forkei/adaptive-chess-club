@@ -29,6 +29,7 @@ class EngineConfig(BaseModel):
     depth: int | None = Field(None, ge=1, le=40)
     # For Maia-2, which takes an Elo bucket
     maia_elo_bucket: int | None = Field(None, ge=1100, le=1900)
+    shuffle_guard_lookback: int = Field(6, ge=0, le=20)
 
 
 class ConsideredMove(BaseModel):

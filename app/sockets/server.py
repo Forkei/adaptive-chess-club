@@ -420,17 +420,29 @@ async def _on_connect(sid, environ, auth):
 
 
 async def _fire_opening_move(match_id: str) -> None:
-    """Background task: plays the character's opening move when they have white."""
+    """Background task: plays the character's opening move when they have white.
+
+    Acquires match_lock so two near-simultaneous connects (e.g. page refresh
+    before the engine responds) cannot both fire the opening move. The re-check
+    inside the lock ensures the first task to finish wins; the second sees
+    move_count > 0 and exits without touching the engine or agents.
+    """
+    from app.concurrency.locks import match_lock
     from app.config import get_settings
     from app.matches.streaming import _run_engine_and_agents
 
     emitters = _build_turn_emitters(match_id)
-    try:
-        await _run_engine_and_agents(
-            match_id=match_id, emitters=emitters, settings=get_settings()
-        )
-    except Exception:
-        logger.exception("Opening move background task failed for match=%s", match_id)
+    async with match_lock(match_id):
+        with SessionLocal() as session:
+            match = _resolve_match(session, match_id)
+            if match is None or match.move_count > 0:
+                return  # Already played by a parallel task.
+        try:
+            await _run_engine_and_agents(
+                match_id=match_id, emitters=emitters, settings=get_settings()
+            )
+        except Exception:
+            logger.exception("Opening move background task failed for match=%s", match_id)
 
 
 @sio.on("disconnect", namespace=NAMESPACE)

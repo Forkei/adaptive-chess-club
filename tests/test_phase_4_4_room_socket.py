@@ -307,8 +307,13 @@ async def test_room_state_includes_existing_turns(live_server):
 
 @pytest.mark.asyncio
 async def test_player_chat_produces_ack_and_agent_chat(live_server):
-    """R.2 — player_chat → player_chat_ack + agent_thinking + agent_chat (in order)."""
-    player_id, char_id, _ = _seed_chat()
+    """R.2 — player_chat → player_chat_ack + agent_thinking + agent_chat (in order).
+
+    Uses add_turn=True so the session is non-empty on connect — this prevents
+    _locked_fire_greeting from firing an agent_thinking before the player sends
+    their message (which would make the ordering assertion non-deterministic).
+    """
+    player_id, char_id, _ = _seed_chat(add_turn=True)
     port = live_server
 
     sio = socketio.AsyncClient()

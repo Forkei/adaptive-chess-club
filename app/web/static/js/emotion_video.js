@@ -142,5 +142,20 @@
     set: setEmotion,
     probe: probeNeutral,
   });
-  probeNeutral();
+
+  // The play page (Fix 2) already rendered video `a` inline with a real src,
+  // so the stage is never blank on first paint. Running probeNeutral() in
+  // that case is a no-op on success (early-return: currentEmotion already
+  // "neutral") but a stage-killer on any error — the probe's onErr path
+  // calls stage.style.display = "none", wiping an already-working video.
+  // Instead, attach an error listener directly to the inline element so
+  // failures degrade cleanly.  On the detail page (no inline src) the probe
+  // still runs as designed to load the first clip.
+  if (currentEl.getAttribute("src")) {
+    currentEl.addEventListener("error", () => {
+      stage.style.display = "none";
+    }, { once: true });
+  } else {
+    probeNeutral();
+  }
 })();

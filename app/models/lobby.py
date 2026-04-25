@@ -263,5 +263,20 @@ class PvpMatch(Base):
     # Holder for disconnect bookkeeping (disconnect_player_id, deadline_iso).
     extra_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
+    # Phase 4.4 — clocks. Copied from Lobby.time_control at match start so
+    # later lobby edits don't mutate a live game. `None` on both clock_ms
+    # fields means untimed; flag-fall logic skips that branch.
+    time_control: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="untimed", server_default="untimed"
+    )
+    increment_ms: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    white_clock_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    black_clock_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Wall-clock instant at which the side-to-move's timer started ticking.
+    # Updated after each move application.
+    last_tick_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)

@@ -32,7 +32,8 @@ from app.db import SessionLocal
 from app.director.director import MatchContext, choose_engine_config
 from app.director.mood import MoodState, apply_deltas, load_mood, save_mood, smooth_mood
 from app.engine import EngineUnavailable, available_engines, get_engine
-from app.engine.base import EngineConfig, MoveResult
+from app.engine.base import ConsideredMove, EngineConfig, MoveResult
+from app.engine.diversity_guard import filter_shuffle_moves
 from app.engine.board_abstraction import board_to_english
 from app.matches import service as _svc
 from app.matches.service import (
@@ -43,6 +44,7 @@ from app.matches.service import (
 )
 from app.models.character import Character
 from app.models.match import Color, Match, MatchResult, MatchStatus, Move, OpponentProfile, Player
+from app.memory.inline_save import save_inline_memory
 from app.schemas.agents import SoulResponse, SurfacedMemory
 
 logger = logging.getLogger(__name__)
@@ -256,6 +258,23 @@ def _head_to_head(profile: OpponentProfile | None) -> dict[str, int] | None:
         "l": profile.games_lost_by_character,
         "d": profile.games_drawn,
     }
+
+
+# --- Own-move extraction for anti-shuffle filter -------------------------
+
+
+def _extract_own_recent_moves(board: chess.Board, lookback: int) -> list[chess.Move]:
+    """Return the side-to-move's last `lookback` own moves from the board stack, newest first.
+
+    After the player moves it's the engine's turn; own moves sit at stack positions
+    -2, -4, -6 … (every other ply, skipping the opponent's intervening moves).
+    """
+    stack = board.move_stack
+    out: list[chess.Move] = []
+    for i in range(2, 2 * lookback + 1, 2):
+        if len(stack) >= i:
+            out.append(stack[-i])
+    return out
 
 
 # --- Player move persistence ----------------------------------------------
@@ -719,6 +738,34 @@ async def _run_engine_and_agents_inner(
 
     assert engine_result is not None  # engine_task is always awaited above
 
+    # Anti-shuffle: skip candidates that cycle a piece back to a square it recently left.
+    own_recent = _extract_own_recent_moves(board, config.shuffle_guard_lookback)
+    top_cm = ConsideredMove(uci=engine_result.move, san=engine_result.san, eval_cp=engine_result.eval_cp)
+    alts = [cm for cm in engine_result.considered_moves if cm.uci != engine_result.move]
+    chosen = filter_shuffle_moves([top_cm] + alts, own_recent, board, config.shuffle_guard_lookback)
+    if chosen.uci != engine_result.move:
+        logger.info(
+            "shuffle_guard: match=%s rejected %s → chose %s",
+            match_id_local, engine_result.move, chosen.uci,
+        )
+        chosen_move = chess.Move.from_uci(chosen.uci)
+        if chosen_move in board.legal_moves:
+            engine_result = MoveResult(
+                move=chosen.uci,
+                san=board.san(chosen_move),
+                eval_cp=chosen.eval_cp,
+                considered_moves=engine_result.considered_moves,
+                time_taken_ms=engine_result.time_taken_ms,
+                engine_name=engine_result.engine_name,
+                thinking_depth=engine_result.thinking_depth,
+                raw=engine_result.raw,
+            )
+        else:
+            logger.warning(
+                "shuffle_guard: chosen %s is illegal on this board — keeping %s",
+                chosen.uci, engine_result.move,
+            )
+
     # --- Phase 3: persist engine move + emit agent_move ----------------
     with SessionLocal() as session:
         match = session.get(Match, match_id_local)
@@ -818,6 +865,17 @@ async def _run_engine_and_agents_inner(
             # future Move to attach to — stash it for post-match use.
             _stash_trailing_chat(match, _drain_pending_chat(match))
         session.commit()
+
+    # Inline memory — fire-and-forget, survives client disconnect.
+    if soul_resp.save_memory:
+        asyncio.create_task(
+            save_inline_memory(
+                soul_resp.save_memory,
+                character_id=character_id_local,
+                player_id=player_id_local,
+                match_id=match_id_local,
+            )
+        )
 
     await emitters.on_agent_chat(soul_resp)
     await emitters.on_mood_update(new_smoothed)

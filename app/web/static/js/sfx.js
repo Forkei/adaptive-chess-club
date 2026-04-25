@@ -43,11 +43,15 @@
     radio_click: "radio_click.ogg",
     creak:       "creak.ogg",
     page_flip:   "page_flip.ogg",
-    // Game
+    // Game (legacy Kenney originals — kept for chime/bell dual-use)
     piece_move:    "piece_move.ogg",
     piece_capture: "piece_capture.ogg",
     bell:          "bell.ogg",
     chime:         "chime.ogg",
+    // Game (Chess_Club replacements wired in playMoveSfx)
+    chess_move:    "move.mp3",
+    chess_capture: "capture.mp3",
+    chess_check:   "check.mp3",
   };
 
   // Per-sound default gain so we don't have to tune at every call site.
@@ -58,6 +62,7 @@
     creak: 0.5, page_flip: 0.35,
     piece_move: 0.5, piece_capture: 0.65,
     bell: 0.7, chime: 0.55,
+    chess_move: 0.55, chess_capture: 0.7, chess_check: 0.65,
   };
 
   function savedMuted() {
@@ -158,18 +163,6 @@
   window.addEventListener("pointerdown", unlock, true);
   window.addEventListener("keydown", unlock, true);
 
-  // Per-element debounce: fire at most once per 200 ms per target so
-  // cursor movement across nested children doesn't hammer the sound.
-  const _hoverTs = new WeakMap();
-  const HOVER_DEBOUNCE_MS = 200;
-  document.addEventListener("mouseover", (ev) => {
-    const t = ev.target.closest && ev.target.closest(".mp-btn, [data-sfx-hover]");
-    if (!t) return;
-    const now = Date.now();
-    if (now - (_hoverTs.get(t) || 0) < HOVER_DEBOUNCE_MS) return;
-    _hoverTs.set(t, now);
-    play("hover", { volume: 0.25 });
-  }, { passive: true });
 
   // Listen to the ambient mute toggle and mirror state so nav toggle
   // silences SFX too.

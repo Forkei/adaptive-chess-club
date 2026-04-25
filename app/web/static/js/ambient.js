@@ -13,11 +13,15 @@
 (function () {
   const MUTED_KEY = "mp_ambient_muted";
   const VOL_KEY = "mp_ambient_volume";
-  const BASE_VOL = 0.45;
 
   const audio = document.getElementById("mp-ambient");
   const toggle = document.getElementById("mp-ambient-toggle");
   if (!audio) return;
+
+  // Per-page volume default: base.html sets data-ambient-volume when the
+  // RoomTheme specifies one (e.g. menu page is quieter than game page).
+  const _dataVol = parseFloat(audio.dataset.ambientVolume);
+  const BASE_VOL = Number.isFinite(_dataVol) ? _dataVol : 0.45;
 
   function savedMuted() {
     // Default to muted (respect autoplay policy) unless user explicitly unmuted.

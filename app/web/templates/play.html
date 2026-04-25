@@ -346,7 +346,7 @@
   requestAnimationFrame(rippleInPieces);
   // Warm up the SFX buffers we know we'll need so the first move
   // doesn't have network latency tacked on.
-  if (window.MpSfx) MpSfx.preload(['piece_move', 'piece_capture', 'chime', 'bell']);
+  if (window.MpSfx) MpSfx.preload(['chess_move', 'chess_capture', 'chess_check', 'bell', 'chime']);
 
   function renderMoves(moves) {
     const ol = document.getElementById('move-list');
@@ -437,9 +437,9 @@
     if (!window.MpSfx) return;
     san = san || '';
     if (san.includes('#')) { MpSfx.play('bell'); return; }
-    if (san.includes('+')) { MpSfx.play('chime'); return; }
-    if (san.includes('x')) { MpSfx.play('piece_capture'); return; }
-    MpSfx.play('piece_move');
+    if (san.includes('+')) { MpSfx.play('chess_check'); return; }
+    if (san.includes('x')) { MpSfx.play('chess_capture'); return; }
+    MpSfx.play('chess_move');
   }
 
   // Find the current king's square from the local game state (after the

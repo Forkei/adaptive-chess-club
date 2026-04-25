@@ -7,6 +7,8 @@
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
+<script src="/static/js/board_fx.js" defer></script>
 <style>
   .mp-board-frame {
     padding: 10px;
@@ -22,6 +24,23 @@
   }
   .white-1e1d7 { background-color: #EDE4CE !important; }
   .black-3c85d { background-color: #2F4A42 !important; }
+  .mp-clock {
+    font-family: var(--mp-font-mono, ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    padding: 8px 14px;
+    border: 1px solid var(--mp-hairline);
+    background: var(--mp-surface-1);
+    color: var(--mp-ink);
+    min-width: 120px;
+    text-align: center;
+    display: inline-flex; gap: 10px; align-items: baseline;
+    transition: border-color 180ms ease, color 180ms ease;
+  }
+  .mp-clock-label { font-size: 10px; letter-spacing: 0.18em; color: var(--mp-ink-faint); text-transform: uppercase; }
+  .mp-clock-time { font-size: 22px; font-weight: 500; }
+  .mp-clock[data-active="true"] { border-color: var(--mp-brass); color: var(--mp-brass-bright); }
+  .mp-clock[data-low="true"] .mp-clock-time { color: #E79E9B; }
 </style>
 {% endblock %}
 
@@ -52,9 +71,26 @@
 
 <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,500px)_minmax(0,1fr)] gap-6 mp-enter mp-enter-2">
   <div>
+    {% if match.time_control and match.time_control != 'untimed' %}
+    <div class="flex justify-between items-center mb-3">
+      <div class="mp-clock" id="clock-top" data-side="{{ 'white' if is_black else 'black' }}">
+        <span class="mp-clock-label">{{ 'White' if is_black else 'Black' }}</span>
+        <span class="mp-clock-time" id="clock-top-time">--:--</span>
+      </div>
+      <div class="text-[11px] mp-mono" style="color: var(--mp-ink-faint);">{{ match.time_control }}{% if match.increment_ms %} ({{ (match.increment_ms // 1000) }}s inc){% endif %}</div>
+    </div>
+    {% endif %}
     <div class="mp-board-frame">
       <div id="board" class="w-full max-w-[480px]"></div>
     </div>
+    {% if match.time_control and match.time_control != 'untimed' %}
+    <div class="mt-3 flex justify-between items-center">
+      <div class="mp-clock" id="clock-bottom" data-side="{{ 'black' if is_black else 'white' }}">
+        <span class="mp-clock-label">{{ 'Black' if is_black else 'White' }}</span>
+        <span class="mp-clock-time" id="clock-bottom-time">--:--</span>
+      </div>
+    </div>
+    {% endif %}
     <div class="mt-4 flex items-center gap-3">
       {% if not is_spectator %}
       <button id="resign-btn" class="mp-btn mp-btn-danger">Resign</button>
@@ -160,13 +196,42 @@
     const payload = await r.json();
     INITIAL_MOVES.push(payload.move);
     appendMove(payload.move);
+    playMoveSfx(payload.move);
     if (payload.game_over) handleGameOver(payload);
     setTurn();
     return payload;
   }
 
+  function playMoveSfx(m) {
+    const san = (m && m.san) || "";
+    const uci = (m && m.uci) || "";
+    if (window.MpSfx) {
+      if (san.includes("#")) MpSfx.play('bell');
+      else if (san.includes("+")) MpSfx.play('chime');
+      else if (san.includes("x")) MpSfx.play('piece_capture');
+      else MpSfx.play('piece_move');
+    }
+    if (window.MpBoardFx) {
+      if (uci) MpBoardFx.flashLastMove(uci);
+      if (san.includes('+') || san.includes('#')) {
+        const t = game.turn();  // side-to-move now = the side checked
+        try {
+          const b = game.board();
+          for (let r=0;r<8;r++) for (let f=0;f<8;f++) {
+            const sq = b[r][f];
+            if (sq && sq.type==='k' && sq.color===t) {
+              MpBoardFx.pulseCheck('abcdefgh'[f] + (8-r));
+            }
+          }
+        } catch(_){}
+      }
+      if (san.includes('#')) MpBoardFx.shakeBoard();
+    }
+  }
+
   function handleGameOver(payload) {
     gameOver = true;
+    if (window.MpSfx) MpSfx.play('bell', { volume: 0.9 });
     document.getElementById('end-panel').classList.remove('hidden');
     const head = document.getElementById('end-headline');
     const detail = document.getElementById('end-detail');
@@ -188,8 +253,74 @@
     }
   });
 
+  // --- clock (Phase 4.4) -------------------------------------------------
+  // Server is the source of truth: on each poll we receive {white_ms,
+  // black_ms, last_tick_at, server_now}. We convert last_tick_at into a
+  // local perf-counter anchor and then count down in the browser at 100ms
+  // so the clock feels live without hammering HTTP. On every poll we
+  // re-anchor — clock drift stays below one poll interval.
+  const CLOCK_TOP = document.getElementById('clock-top');
+  const CLOCK_BOTTOM = document.getElementById('clock-bottom');
+  const CLOCK_ENABLED = !!CLOCK_TOP;
+  let clockState = null; // { white_ms, black_ms, anchored_at_perf, side_to_move }
+
+  function fmtClock(ms) {
+    if (ms == null) return '--:--';
+    ms = Math.max(0, ms);
+    const total_s = Math.floor(ms / 1000);
+    const m = Math.floor(total_s / 60);
+    const s = total_s % 60;
+    if (ms < 10_000) {
+      // last 10s: show tenths
+      const tenths = Math.floor((ms % 1000) / 100);
+      return `${m}:${String(s).padStart(2,'0')}.${tenths}`;
+    }
+    return `${m}:${String(s).padStart(2,'0')}`;
+  }
+
+  function syncClockFromServer(s) {
+    if (!CLOCK_ENABLED || !s.clocks || s.clocks.white_ms == null) return;
+    const now_perf = performance.now();
+    // Side to move per the FEN in the state payload.
+    const side = (s.current_fen.split(' ')[1] === 'w') ? 'white' : 'black';
+    clockState = {
+      white_ms: s.clocks.white_ms,
+      black_ms: s.clocks.black_ms,
+      anchored_at_perf: now_perf,
+      side_to_move: side,
+    };
+    renderClock();
+  }
+
+  function renderClock() {
+    if (!CLOCK_ENABLED || !clockState || gameOver) {
+      if (CLOCK_ENABLED) {
+        CLOCK_TOP.dataset.active = 'false';
+        CLOCK_BOTTOM.dataset.active = 'false';
+      }
+      return;
+    }
+    const elapsed = performance.now() - clockState.anchored_at_perf;
+    const white_now = clockState.side_to_move === 'white'
+      ? clockState.white_ms - elapsed : clockState.white_ms;
+    const black_now = clockState.side_to_move === 'black'
+      ? clockState.black_ms - elapsed : clockState.black_ms;
+
+    const topSide = CLOCK_TOP.dataset.side;
+    const botSide = CLOCK_BOTTOM.dataset.side;
+    const topMs = topSide === 'white' ? white_now : black_now;
+    const botMs = botSide === 'white' ? white_now : black_now;
+    document.getElementById('clock-top-time').textContent = fmtClock(topMs);
+    document.getElementById('clock-bottom-time').textContent = fmtClock(botMs);
+    CLOCK_TOP.dataset.active = (topSide === clockState.side_to_move) ? 'true' : 'false';
+    CLOCK_BOTTOM.dataset.active = (botSide === clockState.side_to_move) ? 'true' : 'false';
+    CLOCK_TOP.dataset.low = topMs != null && topMs < 30_000 ? 'true' : 'false';
+    CLOCK_BOTTOM.dataset.low = botMs != null && botMs < 30_000 ? 'true' : 'false';
+  }
+  if (CLOCK_ENABLED) setInterval(renderClock, 100);
+
   // Spectator + opponent poller — fetch FEN + moves periodically and apply
-  // anything new. 4.2g will replace this with a socket subscription.
+  // anything new. 4.4+ will replace this with a socket subscription.
   let lastMoveCount = INITIAL_MOVES.length;
   async function poll() {
     if (gameOver) return;
@@ -201,12 +332,14 @@
         const m = s.moves[lastMoveCount];
         INITIAL_MOVES.push(m);
         appendMove(m);
+        playMoveSfx(m);
         lastMoveCount++;
       }
       if (game.fen() !== s.current_fen) {
         game.load(s.current_fen);
         board.position(s.current_fen);
       }
+      syncClockFromServer(s);
       if (s.status !== 'in_progress') {
         handleGameOver({ result: s.result, reason: s.reason, game_over: true });
       }
@@ -214,8 +347,11 @@
     } catch (_) {}
   }
   setInterval(poll, 1500);
+  // Prime once so the clock isn't stuck on --:-- for up to 1.5s.
+  poll();
 
   renderMoves();
   setTurn();
+  if (window.MpSfx) MpSfx.preload(['piece_move', 'piece_capture', 'chime', 'bell']);
 </script>
 {% endblock %}

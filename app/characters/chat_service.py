@@ -492,6 +492,11 @@ def maybe_character_greets(
         # hi first. That's fine; it's probabilistic by design.
         return None
 
+    # Re-check after LLM calls: if the player spoke while we were thinking,
+    # discard the greeting so we don't inject a stale opener mid-conversation.
+    if get_turns(session, chat_session):
+        return None
+
     turn = _append_character_turn(
         session, chat_session, text=soul_resp.speak, soul_response=soul_resp,
     )

@@ -325,6 +325,7 @@ def login_form(
     prefill_identifier = identifier
     if not prefill_identifier and player is not None and is_guest_username(player.username):
         prefill_identifier = ""
+    from app.characters.rooms import KENJI_ROOM
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -334,6 +335,7 @@ def login_form(
             "error": error,
             "flash": flash,
             "prefill_identifier": prefill_identifier,
+            "room": KENJI_ROOM,
         },
     )
 
@@ -407,6 +409,7 @@ def signup_form(
 ) -> HTMLResponse:
     # If a guest is logged in, pre-fill any currently-useful fields. We don't
     # prefill email because guests don't have one.
+    from app.characters.rooms import KENJI_ROOM
     return templates.TemplateResponse(
         request,
         "signup.html",
@@ -416,6 +419,7 @@ def signup_form(
             "error": error,
             "flash": flash,
             "upgrade_guest": player is not None and is_guest_username(player.username),
+            "room": KENJI_ROOM,
         },
     )
 

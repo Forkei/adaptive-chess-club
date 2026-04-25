@@ -200,3 +200,30 @@ async def periodic_loop() -> None:
             await run_once()
         except Exception:
             logger.exception("Housekeeping tick failed; continuing")
+
+
+# --- PvP flag-fall sweep --------------------------------------------------
+# Runs at a much faster cadence than the main housekeeping loop (clocks
+# need ~1s resolution to feel right). Kept separate so long sweeps in
+# housekeeping don't delay flag detection.
+
+PVP_FLAGFALL_INTERVAL_SECONDS = 1.0
+
+
+async def pvp_flagfall_loop() -> None:
+    """Tight loop that reaps PvP matches whose side-to-move has flagged."""
+    from app.lobbies.pvp_service import flagfall_sweep
+
+    while True:
+        try:
+            await asyncio.sleep(PVP_FLAGFALL_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            logger.info("PvP flag-fall loop cancelled")
+            raise
+        try:
+            with SessionLocal() as s:
+                flagged = flagfall_sweep(s)
+                if flagged:
+                    logger.info("[pvp-clock] flagged %d match(es): %s", len(flagged), flagged)
+        except Exception:
+            logger.exception("pvp_flagfall_loop tick failed; continuing")

@@ -216,6 +216,10 @@
   let socket = null;
   let socketReady = false;
   let pendingBubble = null;
+  let greetingInFlight = false;
+  let queuedSend = null; // message held while greeting is in flight
+  const INPUT_PLACEHOLDER_DEFAULT = `Say something to ${CHAR_NAME}… (Enter)`;
+  const INPUT_PLACEHOLDER_THINKING = `${CHAR_NAME} is thinking…`;
 
   function initSocket() {
     socket = io('/room', {
@@ -285,14 +289,37 @@
       }
     });
 
-    socket.on('agent_thinking', () => {
+    socket.on('agent_thinking', (data) => {
       showThinking();
+      if (data && data.source === 'greeting') {
+        greetingInFlight = true;
+        chatInput.disabled = true;
+        chatInput.placeholder = INPUT_PLACEHOLDER_THINKING;
+      }
     });
 
     socket.on('agent_chat', (data) => {
       removeThinking();
       renderBubble('character', data.text || '…');
       setEmotion(data.emotion, data.emotion_intensity || 0);
+
+      if (greetingInFlight) {
+        // Greeting just landed — flush any message the player queued while waiting.
+        greetingInFlight = false;
+        chatInput.disabled = false;
+        chatInput.placeholder = INPUT_PLACEHOLDER_DEFAULT;
+        if (queuedSend) {
+          const queued = queuedSend;
+          queuedSend = null;
+          sendMessage(queued);
+          return;
+        }
+        chatInput.focus();
+        return;
+      }
+
+      chatInput.disabled = false;
+      chatInput.focus();
 
       if (data.game_action === 'propose_game') {
         gaHint.textContent = "they've suggested a game — reply to accept";
@@ -305,10 +332,26 @@
       }
     });
 
+    socket.on('greeting_done', () => {
+      // Character stayed silent — unlock input without rendering a bubble.
+      greetingInFlight = false;
+      removeThinking();
+      chatInput.disabled = false;
+      chatInput.placeholder = INPUT_PLACEHOLDER_DEFAULT;
+      if (queuedSend) {
+        const queued = queuedSend;
+        queuedSend = null;
+        sendMessage(queued);
+        return;
+      }
+      chatInput.focus();
+    });
+
     socket.on('agent_error', (data) => {
+      greetingInFlight = false;
+      chatInput.placeholder = INPUT_PLACEHOLDER_DEFAULT;
       removeThinking();
       const msg = (data && data.message) || 'Something went wrong — try again.';
-      // Subtle inline error rather than a toast.
       const errDiv = document.createElement('div');
       errDiv.className = 'text-xs text-rose-400 italic mt-1';
       errDiv.textContent = msg;
@@ -376,12 +419,19 @@
 
   function sendMessage(text) {
     if (!text) return;
+    if (greetingInFlight) {
+      // Character is mid-greeting — hold this message until the greeting lands,
+      // so the greeting bubble always appears before the player's first message.
+      queuedSend = text;
+      chatInput.value = '';
+      chatInput.disabled = true;
+      return;
+    }
     if (socketReady && socket && socket.connected) {
       pendingBubble = renderBubble('player', text, { pending: true });
       chatInput.value = '';
       chatInput.disabled = true;
       socket.emit('player_chat', { text });
-      // Re-enable after brief window (agent_thinking re-enables after response).
       setTimeout(() => { chatInput.disabled = false; }, 200);
     } else {
       sendMessageHttp(text);

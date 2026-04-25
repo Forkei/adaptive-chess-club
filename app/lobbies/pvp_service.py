@@ -57,6 +57,61 @@ logger = logging.getLogger(__name__)
 START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 
+# --- clock helpers --------------------------------------------------------
+
+
+def _parse_time_control(tc: str | None) -> tuple[int | None, int]:
+    """Map a time-control preset to (initial_ms, increment_ms).
+
+    `"untimed"` or unknown → `(None, 0)` and the caller leaves clocks NULL.
+    Format: ``"<minutes>+<increment_seconds>"``.
+    """
+    if not tc or tc == "untimed":
+        return None, 0
+    try:
+        mins_s, inc_s = tc.split("+", 1)
+        initial_ms = int(mins_s) * 60_000
+        increment_ms = int(inc_s) * 1_000
+        if initial_ms < 0 or increment_ms < 0:
+            return None, 0
+        return initial_ms, increment_ms
+    except (ValueError, AttributeError):
+        return None, 0
+
+
+def _side_to_move(match: PvpMatch) -> str:
+    """'white' or 'black' — whichever has the move in current_fen."""
+    try:
+        return "white" if chess.Board(match.current_fen).turn == chess.WHITE else "black"
+    except ValueError:
+        # Bad FEN — treat as white to move. Shouldn't happen.
+        return "white"
+
+
+def _apply_tick(match: PvpMatch, *, now: datetime) -> bool:
+    """Subtract elapsed wall-clock from the side-to-move's clock. Returns
+    True iff they flagged (elapsed >= remaining).
+
+    No-op for untimed matches (clock fields are None). Updates
+    `match.last_tick_at` to `now`.
+    """
+    if match.white_clock_ms is None or match.black_clock_ms is None:
+        match.last_tick_at = now
+        return False
+    last = match.last_tick_at or match.started_at or now
+    elapsed_ms = max(0, int((now - last).total_seconds() * 1000))
+    side = _side_to_move(match)
+    remaining = match.white_clock_ms if side == "white" else match.black_clock_ms
+    flagged = elapsed_ms >= remaining
+    new_clock = 0 if flagged else remaining - elapsed_ms
+    if side == "white":
+        match.white_clock_ms = new_clock
+    else:
+        match.black_clock_ms = new_clock
+    match.last_tick_at = now
+    return flagged
+
+
 # --- errors ---------------------------------------------------------------
 
 
@@ -134,6 +189,11 @@ def start_match(
     if white_player is None or black_player is None:
         raise PvpError("seat player missing")
 
+    # Phase 4.4 — snapshot clocks from lobby time_control. Untimed leaves
+    # clock columns NULL and the tick+flag-fall logic short-circuits.
+    initial_ms, increment_ms = _parse_time_control(getattr(lobby, "time_control", None))
+    now = datetime.utcnow()
+
     match = PvpMatch(
         lobby_id=lobby.id,
         white_player_id=white_id,
@@ -147,6 +207,12 @@ def start_match(
         white_elo_at_start=int(white_player.elo),
         black_elo_at_start=int(black_player.elo),
         extra_state={},
+        time_control=(lobby.time_control or "untimed"),
+        increment_ms=increment_ms,
+        white_clock_ms=initial_ms,
+        black_clock_ms=initial_ms,
+        last_tick_at=now if initial_ms is not None else None,
+        started_at=now,
     )
     session.add(match)
     session.flush()
@@ -206,10 +272,28 @@ def apply_move(
     if move not in board.legal_moves:
         raise PvpIllegalMove(f"not a legal move: {uci}")
 
+    # Phase 4.4 — clock: bill the mover's elapsed time before we stamp the
+    # move. If they flagged, the opponent wins on time; don't apply the move.
+    now = datetime.utcnow()
+    if _apply_tick(match, now=now):
+        # Flag-fall: opponent wins on time.
+        winner = PvpMatchResult.BLACK_WIN if my_side == chess.WHITE else PvpMatchResult.WHITE_WIN
+        _finalize(session, match, status=PvpMatchStatus.COMPLETED, result=winner, reason="time")
+        return AppliedPvpMove(
+            move={}, fen_after=match.current_fen, game_over=True, result=winner, reason="time",
+        )
+
     san = board.san(move)
     board.push(move)
     fen_after = board.fen()
-    now_iso = datetime.utcnow().isoformat() + "Z"
+    now_iso = now.isoformat() + "Z"
+
+    # Fischer increment credited after a successful move.
+    if match.white_clock_ms is not None and match.increment_ms:
+        if my_side == chess.WHITE:
+            match.white_clock_ms = (match.white_clock_ms or 0) + match.increment_ms
+        else:
+            match.black_clock_ms = (match.black_clock_ms or 0) + match.increment_ms
 
     entry = {
         "move_number": match.move_count + 1,
@@ -455,6 +539,46 @@ def _player_ratchet(session: Session, player: Player, raw_delta: float) -> Ratch
         current_elo_change=actual_change,
         floor_elo_raised=floor_raised,
     )
+
+
+# --- flag-fall sweep ------------------------------------------------------
+
+
+def flagfall_sweep(session: Session) -> list[str]:
+    """Walk all IN_PROGRESS PvP matches with live clocks and flag any whose
+    side-to-move has exhausted their time. Returns the list of match ids
+    that flagged.
+
+    Called from a background thread every few seconds. Idempotent — a
+    flagged match is COMPLETED, next sweep skips it.
+    """
+    now = datetime.utcnow()
+    rows = session.execute(
+        select(PvpMatch)
+        .where(PvpMatch.status == PvpMatchStatus.IN_PROGRESS)
+        .where(PvpMatch.white_clock_ms.is_not(None))
+    ).scalars().all()
+    flagged: list[str] = []
+    for match in rows:
+        if match.last_tick_at is None:
+            continue
+        side = _side_to_move(match)
+        remaining = match.white_clock_ms if side == "white" else match.black_clock_ms
+        if remaining is None:
+            continue
+        elapsed_ms = int((now - match.last_tick_at).total_seconds() * 1000)
+        if elapsed_ms >= remaining:
+            if side == "white":
+                match.white_clock_ms = 0
+                winner = PvpMatchResult.BLACK_WIN
+            else:
+                match.black_clock_ms = 0
+                winner = PvpMatchResult.WHITE_WIN
+            match.last_tick_at = now
+            _finalize(session, match, status=PvpMatchStatus.COMPLETED, result=winner, reason="time")
+            flagged.append(match.id)
+            logger.info("[pvp-clock] match=%s flagged side=%s", match.id, side)
+    return flagged
 
 
 # --- lookup ---------------------------------------------------------------
