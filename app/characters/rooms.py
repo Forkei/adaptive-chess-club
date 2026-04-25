@@ -147,7 +147,7 @@ KENJI_ROOM = RoomTheme(
         "--mp-ink-blue-alt":"#A8C3FF",
     },
     ambient_track="/static/audio/ambient/coffee_shop.ogg",
-    background="/static/characters/kenji_sato/background.webp",
+    background="/static/characters/kenji_sato/background.png",
     background_kind="image",
     emotion_clips=_kenji_clips(),
 )
