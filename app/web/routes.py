@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -82,6 +83,20 @@ _TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
 router = APIRouter(tags=["web"])
+
+
+def _room_for_match(character) -> "RoomTheme":
+    """Return the room theme for a match page, swapping in ambient_track_game
+    and ambient_volume_game when the character has a separate in-game track."""
+    from app.characters.rooms import RoomTheme, theme_for_character
+    room = theme_for_character(character)
+    if room.ambient_track_game:
+        room = replace(
+            room,
+            ambient_track=room.ambient_track_game,
+            ambient_volume=room.ambient_volume_game,
+        )
+    return room
 
 
 def _run_generation_bg(character_id: str) -> None:
@@ -1264,7 +1279,7 @@ def match_page(
             "moves_json": moves,
             "engines_available": engines,
             "has_real_engine": bool(real_engines),
-            "room": theme_for_character(character),
+            "room": _room_for_match(character),
             "pre_match_chat": pre_match_chat,
         },
     )
@@ -1312,7 +1327,7 @@ def match_watch_page(
             "character": character,
             "match_owner": match_owner,
             "moves_json": moves,
-            "room": theme_for_character(character),
+            "room": _room_for_match(character),
         },
     )
 

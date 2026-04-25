@@ -37,6 +37,19 @@ class RoomTheme:
     css_vars: dict[str, str] = field(default_factory=dict)
     # Path relative to /static, or None.
     ambient_track: str | None = None
+    # Separate track for the in-game match page (play.html / watch.html).
+    # When set, routes.py swaps this in via dataclasses.replace() so the
+    # detail/chat page and the match page play different music.
+    ambient_track_game: str | None = None
+    # Override the default BASE_VOL (0.45) for this room's ambient track.
+    # Rendered as data-ambient-volume on the <audio> element so ambient.js
+    # can pick it up without knowing about Python at all.
+    ambient_volume: float | None = None
+    # Volume for the in-game track (ambient_track_game). When set,
+    # _room_for_match swaps this in alongside the game track so the match
+    # page can play at a different level than the menu/chat room.
+    # None → base.html emits the hardcoded 0.7 fallback.
+    ambient_volume_game: float | None = None
     background: str | None = None
     background_kind: str = "none"  # "image" | "video" | "none"
     # Soul-emitted emotion → clip URL (relative to /static). Missing
@@ -146,7 +159,10 @@ KENJI_ROOM = RoomTheme(
         "--mp-ink-blue":    "#7AA7FF",
         "--mp-ink-blue-alt":"#A8C3FF",
     },
-    ambient_track="/static/audio/ambient/coffee_shop.ogg",
+    ambient_track="/static/audio/ambient/ambient_menu.mp3",
+    ambient_track_game="/static/audio/ambient/ambient_game.mp3",
+    ambient_volume=0.30,
+    ambient_volume_game=0.70,
     background="/static/characters/kenji_sato/background.png",
     background_kind="image",
     emotion_clips=_kenji_clips(),
