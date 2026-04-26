@@ -108,6 +108,9 @@ class Player(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
 
     matches: Mapped[list["Match"]] = relationship(back_populates="player", lazy="selectin")
+    agents: Mapped[list["PlayerAgent"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "PlayerAgent", back_populates="owner", lazy="selectin"
+    )
 
 
 class Match(Base):

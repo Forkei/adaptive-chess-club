@@ -1,5 +1,6 @@
 from app.models.auth import PasswordResetToken
 from app.models.base import Base
+from app.models.player_agent import PlayerAgent
 from app.models.chat import (
     CharacterChatSession,
     CharacterChatTurn,
@@ -30,6 +31,7 @@ from app.models.match import (
 from app.models.memory import Memory, MemoryScope, MemoryType
 
 __all__ = [
+    "PlayerAgent",
     "Base",
     "CharacterChatSession",
     "CharacterChatTurn",

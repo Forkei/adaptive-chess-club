@@ -62,7 +62,7 @@ def get_session() -> Iterator[Session]:
 
 def init_db() -> None:
     from app.models.base import Base  # noqa: F401 — import side effect
-    from app.models import auth, character, chat, evolution, feedback, lobby, match, memory  # noqa: F401
+    from app.models import auth, character, chat, evolution, feedback, lobby, match, memory, player_agent  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 
