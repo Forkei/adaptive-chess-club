@@ -1288,6 +1288,16 @@ def match_page(
         from app.models.player_agent import PlayerAgent
         participant_agent = session.get(PlayerAgent, match.participant_agent_id)
 
+    # Post-match analysis state — lets the watch page restore the step indicators
+    # after a page refresh (they would otherwise stay gray because the socket
+    # events that drove them are long gone).
+    from app.models.match import MatchAnalysis
+    _analysis = session.execute(
+        select(MatchAnalysis).where(MatchAnalysis.match_id == match_id)
+    ).scalar_one_or_none()
+    analysis_status = _analysis.status.value if _analysis else None
+    analysis_steps_completed = list(_analysis.steps_completed or []) if _analysis else []
+
     return templates.TemplateResponse(
         request,
         "play.html",
@@ -1301,6 +1311,8 @@ def match_page(
             "room": _room_for_match(character),
             "pre_match_chat": pre_match_chat,
             "participant_agent": participant_agent,
+            "analysis_status": analysis_status,
+            "analysis_steps_completed": analysis_steps_completed,
         },
     )
 

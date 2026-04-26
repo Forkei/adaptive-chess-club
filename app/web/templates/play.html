@@ -256,6 +256,8 @@
   const WATCH_MODE = {{ (match.match_kind == 'agent_vs_character') | tojson }};
   const AGENT_NAME = {{ ((participant_agent.name if participant_agent else '') if match.match_kind == 'agent_vs_character' else '') | tojson }};
   const AGENT_ID = {{ (match.participant_agent_id or '') | tojson }};
+  const ANALYSIS_STATUS = {{ (analysis_status or '') | tojson }};
+  const ANALYSIS_STEPS_COMPLETED = {{ (analysis_steps_completed or []) | tojson }};
 
   const game = new Chess(INITIAL_FEN);
   let gameOver = INITIAL_STATUS !== "in_progress";
@@ -400,6 +402,24 @@
   // Warm up the SFX buffers we know we'll need so the first move
   // doesn't have network latency tacked on.
   if (window.MpSfx) MpSfx.preload(['chess_move', 'chess_capture', 'chess_check', 'bell', 'chime']);
+
+  // Restore post-match panel on page refresh: if the match is already finished
+  // and the pipeline completed, show the panel with all steps green immediately
+  // instead of waiting for socket events that will never arrive.
+  if (WATCH_MODE && INITIAL_STATUS !== 'in_progress' && ANALYSIS_STATUS === 'completed') {
+    startPostMatchPanel();
+    renderPostMatchSteps(ANALYSIS_STEPS_COMPLETED, null);
+    const headline = document.getElementById('postmatch-headline');
+    if (headline) headline.textContent = 'Match complete.';
+    const panel = document.getElementById('postmatch-panel');
+    if (panel && AGENT_ID) {
+      const link = document.createElement('a');
+      link.href = `/matches/${MATCH_ID}/summary`;
+      link.className = 'block mt-2 text-xs text-[var(--mp-brass-dim)] hover:text-[var(--mp-brass-bright)] transition';
+      link.textContent = 'View match summary →';
+      panel.appendChild(link);
+    }
+  }
 
   function renderMoves(moves) {
     const ol = document.getElementById('move-list');
@@ -720,11 +740,16 @@
       document.getElementById('postmatch-headline').textContent = headline;
       if (AGENT_ID) {
         const panel = document.getElementById('postmatch-panel');
-        const link = document.createElement('a');
-        link.href = `/agents/${AGENT_ID}`;
-        link.className = 'block mt-2 text-xs text-[var(--mp-brass-dim)] hover:text-[var(--mp-brass-bright)] transition';
-        link.textContent = `View ${AGENT_NAME || 'agent'} detail →`;
-        panel.appendChild(link);
+        const summaryLink = document.createElement('a');
+        summaryLink.href = `/matches/${MATCH_ID}/summary`;
+        summaryLink.className = 'block mt-2 text-xs text-[var(--mp-brass-dim)] hover:text-[var(--mp-brass-bright)] transition';
+        summaryLink.textContent = 'View match summary →';
+        panel.appendChild(summaryLink);
+        const agentLink = document.createElement('a');
+        agentLink.href = `/agents/${AGENT_ID}`;
+        agentLink.className = 'block mt-1 text-xs text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink-muted)] transition';
+        agentLink.textContent = `View ${AGENT_NAME || 'agent'} detail →`;
+        panel.appendChild(agentLink);
       }
     } else {
       document.getElementById('postmatch-headline').textContent = 'Done. Redirecting to the summary…';
