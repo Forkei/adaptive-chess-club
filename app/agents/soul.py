@@ -234,6 +234,80 @@ def run_agent_soul_in_match(
     return _sanitize(raw, inp.surfaced_memories)
 
 
+def run_agent_soul_in_match_move(
+    system_prompt: str,
+    inp: SoulInput,
+    *,
+    llm: LLMClient | None = None,
+) -> SoulResponse:
+    """Run Soul for the agent's own move turn inside a live match.
+
+    Uses the full in-match user prompt (board, engine move, cross-chat,
+    memories) — identical structure to `run_soul` for characters but with
+    a pre-built agent system prompt instead of `build_system_prompt`.
+    """
+    from app.agents.prompts import build_user_prompt
+
+    user = build_user_prompt(
+        character=None,  # type: ignore[arg-type]  — not accessed in function body
+        board=inp.board,
+        mood=inp.mood,
+        surfaced_memories=inp.surfaced_memories,
+        recent_chat=inp.recent_chat,
+        engine_move_san=inp.engine_move_san,
+        engine_move_uci=inp.engine_move_uci,
+        engine_eval_cp=inp.engine_eval_cp,
+        engine_considered=inp.engine_considered,
+        engine_time_ms=inp.engine_time_ms,
+        move_number=inp.move_number,
+        game_phase=inp.game_phase,
+        opponent_profile_summary=inp.opponent_profile_summary,
+        head_to_head=inp.head_to_head,
+        player_just_spoke=inp.player_just_spoke,
+        last_player_chat=inp.last_player_chat,
+        character_color=inp.character_color,
+        opponent_last_san=inp.opponent_last_san,
+        opponent_last_uci=inp.opponent_last_uci,
+        player_took_seconds=inp.player_took_seconds,
+        player_average_seconds=inp.player_average_seconds,
+        elapsed_total_seconds=inp.elapsed_total_seconds,
+    )
+    prompt = f"{system_prompt}\n\n---\n\n{user}"
+
+    client = llm
+    if client is None:
+        try:
+            client = get_llm_client()
+        except LLMError as exc:
+            logger.warning("Agent Soul in-match-move: LLM unavailable (%s); returning silent fallback", exc)
+            return _fallback_response()
+
+    try:
+        raw = client.generate_structured(
+            prompt=prompt,
+            response_schema=SoulResponse,
+            response_adapter=_SOUL_ADAPTER,
+            temperature=0.85,
+            max_output_tokens=800,
+            call_tag=f"agent_soul_move:{inp.match_id}",
+        )
+    except LLMError as exc:
+        logger.warning("Agent Soul in-match-move LLM call failed (%s); returning silent fallback", exc)
+        return _fallback_response()
+    except Exception as exc:
+        logger.exception("Agent Soul in-match-move unexpected error (%s); returning silent fallback", exc)
+        return _fallback_response()
+
+    if not isinstance(raw, SoulResponse):
+        try:
+            raw = _SOUL_ADAPTER.validate_python(raw)
+        except Exception as exc:
+            logger.warning("Agent Soul in-match-move output failed validation (%s); silent fallback", exc)
+            return _fallback_response()
+
+    return _sanitize(raw, inp.surfaced_memories)
+
+
 def run_agent_soul_for_room(
     system_prompt: str,
     inp: SoulInput,

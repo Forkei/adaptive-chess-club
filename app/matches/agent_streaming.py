@@ -18,7 +18,7 @@ import types
 import chess
 from sqlalchemy import select
 
-from app.agents.soul import SoulInput, _fallback_response, run_agent_soul_for_room, run_agent_soul_in_match
+from app.agents.soul import SoulInput, _fallback_response, run_agent_soul_for_room, run_agent_soul_in_match, run_agent_soul_in_match_move
 from app.agents.subconscious import SubconsciousInput, run_subconscious
 from app.config import get_settings
 from app.db import SessionLocal
@@ -36,7 +36,9 @@ from app.engine.board_abstraction import board_to_english
 from app.matches import service as _svc
 from app.matches.streaming import (
     TurnEmitters,
+    _extract_own_recent_moves,
     _finalize_outcome,
+    _load_cross_chat_lines,
     _load_last_chat_lines,
     _persist_engine_move,
     _run_engine_and_agents,
@@ -130,7 +132,32 @@ async def _run_agent_engine_turn(
 
         # Pre-engine board summary for Subconscious.
         pre_engine_summary = board_to_english(board, eval_cp=None)
-        recent_chat = _load_last_chat_lines(session, match_id)
+
+        from app.models.character import Character as _Char
+        character = session.get(_Char, match.character_id)
+        kenji_name = character.name if character else "Opponent"
+
+        # Cross-chat: label agent's own quips "You:" and Kenji's as "Kenji:".
+        player_color_str = match.player_color.value
+        kenji_color_str = "black" if player_color_str == "white" else "white"
+        recent_chat = _load_cross_chat_lines(
+            session, match_id,
+            own_color=player_color_str,
+            opponent_name=kenji_name,
+        )
+
+        # Kenji's last move — passed to agent Soul as opponent_last context.
+        from app.models.match import Color as _Color
+        kenji_side = _Color.BLACK if match.player_color == _Color.WHITE else _Color.WHITE
+        last_kenji_move_row = session.execute(
+            select(Move)
+            .where(Move.match_id == match_id, Move.side == kenji_side)
+            .order_by(Move.move_number.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        kenji_last_san = last_kenji_move_row.san if last_kenji_move_row else None
+        kenji_last_uci = last_kenji_move_row.uci if last_kenji_move_row else None
+
         last_player_moves = list(
             session.execute(
                 select(Move)
@@ -143,7 +170,6 @@ async def _run_agent_engine_turn(
 
         match_id_local = match.id
         player_id_local = match.player_id
-        player_color_str = match.player_color.value
         mood_snapshot = smoothed.to_dict()
 
     # Emit thinking.
@@ -199,6 +225,42 @@ async def _run_agent_engine_turn(
     if engine_result is None:
         logger.warning("[agent_loop] engine returned None for match=%s", match_id)
         return False
+
+    # --- Anti-shuffle guard (same logic as streaming.py Kenji path) ----------
+    from app.engine.base import ConsideredMove
+    from app.engine.diversity_guard import filter_shuffle_moves
+
+    own_recent = _extract_own_recent_moves(board, config.shuffle_guard_lookback)
+    top_cm = ConsideredMove(
+        uci=engine_result.move,
+        san=engine_result.san,
+        eval_cp=engine_result.eval_cp,
+    )
+    alts = [cm for cm in engine_result.considered_moves if cm.uci != engine_result.move]
+    chosen = filter_shuffle_moves([top_cm] + alts, own_recent, board, config.shuffle_guard_lookback)
+    if chosen.uci != engine_result.move:
+        logger.info(
+            "shuffle_guard[agent]: match=%s rejected %s → chose %s",
+            match_id, engine_result.move, chosen.uci,
+        )
+        chosen_move = chess.Move.from_uci(chosen.uci)
+        if chosen_move in board.legal_moves:
+            from app.engine.base import MoveResult
+            engine_result = MoveResult(
+                move=chosen.uci,
+                san=board.san(chosen_move),
+                eval_cp=chosen.eval_cp,
+                considered_moves=engine_result.considered_moves,
+                time_taken_ms=engine_result.time_taken_ms,
+                engine_name=engine_result.engine_name,
+                thinking_depth=engine_result.thinking_depth,
+                raw=engine_result.raw,
+            )
+        else:
+            logger.warning(
+                "shuffle_guard[agent]: chosen %s is illegal — keeping %s",
+                chosen.uci, engine_result.move,
+            )
 
     # --- Persist agent's move as the "player" move row ----------------------
     game_ended = False
@@ -273,8 +335,11 @@ async def _run_agent_engine_turn(
                 last_player_chat=None,
                 match_id=match_id_local,
                 character_color=player_color_str,
+                opponent_last_san=kenji_last_san,
+                opponent_last_uci=kenji_last_uci,
             )
-            return run_agent_soul_for_room(system, soul_inp)
+            # Use in-match Soul variant (not the pre-match room variant).
+            return run_agent_soul_in_match_move(system, soul_inp)
 
     try:
         soul_resp: SoulResponse = await asyncio.wait_for(

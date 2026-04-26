@@ -193,6 +193,43 @@ def _load_last_chat_lines(session, match_id: str, limit: int = 5) -> list[str]:
     return out[-limit:]
 
 
+def _load_cross_chat_lines(
+    session,
+    match_id: str,
+    own_color: str,
+    opponent_name: str,
+    limit: int = 5,
+) -> list[str]:
+    """Like `_load_last_chat_lines` but labels each side's chat distinctly.
+
+    Used in agent_vs_character matches so each Soul can tell its own quips
+    apart from the opponent's.  own_color is the SIDE whose chat becomes
+    "You: ...", the other side's chat becomes "{opponent_name}: ...".
+    """
+    from app.models.match import Color
+
+    own_side = Color.WHITE if own_color == "white" else Color.BLACK
+    rows = list(
+        session.execute(
+            select(Move)
+            .where(Move.match_id == match_id)
+            .order_by(Move.move_number.desc())
+            .limit(limit * 2)
+        ).scalars()
+    )
+    rows.reverse()
+    out: list[str] = []
+    for mv in rows:
+        if mv.player_chat_before:
+            out.append(f"Player: {mv.player_chat_before}")
+        if mv.agent_chat_after:
+            if mv.side == own_side:
+                out.append(f"You: {mv.agent_chat_after}")
+            else:
+                out.append(f"{opponent_name}: {mv.agent_chat_after}")
+    return out[-limit:]
+
+
 def _load_last_player_san(session, match_id: str) -> str | None:
     match = session.get(Match, match_id)
     if match is None:
@@ -662,7 +699,20 @@ async def _run_engine_and_agents_inner(
         profile = _opponent_profile_for(
             session, character_id=match.character_id, player_id=match.player_id
         )
-        recent_chat = _load_last_chat_lines(session, match.id)
+        # For agent_vs_character, label each side's chat distinctly so Kenji's
+        # Soul can tell its own quips from the agent's. Otherwise fall back to
+        # the standard "You: ..." labeling used in human_vs_character matches.
+        if match.match_kind == "agent_vs_character" and match.participant_agent_id:
+            from app.models.player_agent import PlayerAgent as _PA
+            _agent = session.get(_PA, match.participant_agent_id)
+            agent_name = _agent.name if _agent else "Opponent"
+            recent_chat = _load_cross_chat_lines(
+                session, match.id,
+                own_color=character_color_str,
+                opponent_name=agent_name,
+            )
+        else:
+            recent_chat = _load_last_chat_lines(session, match.id)
 
         # Peek — DON'T drain — chat sent during engine thinking. Those messages
         # will be claimed as player_chat_before on the *next* player move's
