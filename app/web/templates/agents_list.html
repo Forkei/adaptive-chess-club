@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}My Agents — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="mp-enter mp-enter-1 mb-8 flex items-end justify-between">
+  <div>
+    <div class="mp-eyebrow mb-2">Your roster</div>
+    <h1 class="mp-display text-[32px] tracking-tight">My Agents</h1>
+    <p class="text-[13px] text-[var(--mp-ink-muted)] mt-2 max-w-lg">
+      Agents play Kenji on your behalf. Each has its own personality, Elo rating, and match history.
+      You can have up to {{ max_agents }} active agents.
+    </p>
+  </div>
+  {% if not at_limit %}
+  <a href="/agents/new" class="mp-btn mp-btn-brass shrink-0">
+    + New Agent
+  </a>
+  {% endif %}
+</div>
+
+{% if request.query_params.get('error') %}
+<div class="mb-6 rounded-sm border border-[rgba(168,66,63,0.4)] bg-[rgba(168,66,63,0.08)] p-3 text-sm text-[#E79E9B]">
+  {% set err = request.query_params.get('error') %}
+  {% if err == 'limit_reached' %}
+    You already have {{ max_agents }} active agents — archive one before creating a new one.
+  {% else %}
+    {{ err }}
+  {% endif %}
+</div>
+{% endif %}
+
+{% if agents %}
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mp-enter mp-enter-2">
+  {% for agent in agents %}
+  <a href="/agents/{{ agent.id }}" class="mp-panel-raised rounded-sm p-5 flex gap-4 items-start no-underline hover:border-[var(--mp-brass-dim)] transition group">
+    <div class="shrink-0 w-14 h-14 flex items-center justify-center border border-[var(--mp-hairline-2)] bg-[var(--mp-surface-1)] rounded-sm overflow-hidden">
+      {% if agent.avatar_image_url %}
+      <img src="{{ agent.avatar_image_url }}" alt="{{ agent.name }}" class="w-full h-full object-cover" />
+      {% else %}
+      <img src="/static/img/agent_placeholder.svg" alt="Agent placeholder" class="w-full h-full object-cover opacity-70" />
+      {% endif %}
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="font-medium text-[var(--mp-ink)] text-[15px] group-hover:text-[var(--mp-brass-bright)] transition truncate">{{ agent.name }}</span>
+        <span class="mp-chip border-[var(--mp-hairline-2)] text-[var(--mp-ink-muted)] shrink-0">
+          {{ agent.elo }} Elo
+        </span>
+      </div>
+      <p class="text-[12px] text-[var(--mp-ink-muted)] mp-clamp-2 leading-relaxed">
+        {{ agent.personality_description }}
+      </p>
+      <div class="mp-eyebrow mt-3">Created {{ agent.created_at.strftime('%b %d, %Y') }}</div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+{% if at_limit %}
+<div class="mt-6 p-3 border border-[var(--mp-hairline-2)] rounded-sm text-[13px] text-[var(--mp-ink-muted)] mp-enter mp-enter-3">
+  You have reached the {{ max_agents }}-agent limit. Archive an agent to create a new one.
+</div>
+{% endif %}
+
+{% else %}
+<div class="mp-panel rounded-sm p-12 text-center mp-enter mp-enter-2">
+  <div class="text-[40px] mb-4 opacity-40">♟</div>
+  <div class="mp-display text-[20px] text-[var(--mp-ink-muted)] mb-3">No agents yet</div>
+  <p class="text-[13px] text-[var(--mp-ink-faint)] mb-6 max-w-sm mx-auto">
+    Create your first agent and send it to challenge Kenji on your behalf.
+  </p>
+  <a href="/agents/new" class="mp-btn mp-btn-brass">Create your first agent</a>
+</div>
+{% endif %}
+
+{% endblock %}

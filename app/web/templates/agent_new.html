@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}New Agent — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto mp-enter mp-enter-1">
+  <div class="mb-8">
+    <a href="/agents" class="text-[12px] text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink-muted)] transition">← Back to My Agents</a>
+    <div class="mp-eyebrow mt-4 mb-2">New agent</div>
+    <h1 class="mp-display text-[32px] tracking-tight">Create an Agent</h1>
+    <p class="text-[13px] text-[var(--mp-ink-muted)] mt-2">
+      Give your agent a name and personality. It will use the same Soul architecture as Kenji,
+      driven by your description.
+    </p>
+  </div>
+
+  {% if error %}
+  <div class="mb-6 rounded-sm border border-[rgba(168,66,63,0.4)] bg-[rgba(168,66,63,0.08)] p-3 text-sm text-[#E79E9B]">
+    {% if error == 'name_length' %}Name must be {{ name_min }}–{{ name_max }} characters.
+    {% elif error == 'name_taken' %}You already have an active agent with that name.
+    {% elif error == 'personality_too_short' %}Personality description must be at least {{ personality_min }} characters.
+    {% elif error == 'personality_too_long' %}Personality description must be {{ personality_max }} characters or fewer.
+    {% elif error == 'limit_reached' %}You have reached the maximum number of active agents.
+    {% else %}{{ error }}{% endif %}
+  </div>
+  {% endif %}
+
+  <form action="/agents/new" method="post" class="space-y-6 mp-panel rounded-sm p-6 mp-enter mp-enter-2">
+    <div>
+      <label class="block mp-eyebrow mb-2">Agent name <span class="text-[var(--mp-oxblood)]">*</span></label>
+      <input
+        type="text"
+        name="name"
+        class="mp-input w-full"
+        placeholder="e.g. Riley, The Hammer, Aleksei"
+        minlength="{{ name_min }}"
+        maxlength="{{ name_max }}"
+        required
+      />
+      <div class="text-[11px] text-[var(--mp-ink-faint)] mt-1">{{ name_min }}–{{ name_max }} characters. Must be unique among your active agents.</div>
+    </div>
+
+    <div>
+      <label class="block mp-eyebrow mb-2">Personality description <span class="text-[var(--mp-oxblood)]">*</span></label>
+      <textarea
+        name="personality_description"
+        class="mp-input w-full resize-y"
+        rows="6"
+        minlength="{{ personality_min }}"
+        maxlength="{{ personality_max }}"
+        placeholder="{{ personality_placeholder }}"
+        required
+      ></textarea>
+      <div class="text-[11px] text-[var(--mp-ink-faint)] mt-1">
+        {{ personality_min }}–{{ personality_max }} characters. This text shapes the agent's voice and reactions during play.
+        Describe playing style, personality traits, background — the more specific, the better.
+      </div>
+    </div>
+
+    <div class="mp-brass-rule"></div>
+    <div class="flex items-center gap-3">
+      <button type="submit" class="mp-btn mp-btn-brass">Create Agent</button>
+      <a href="/agents" class="mp-btn mp-btn-ghost">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

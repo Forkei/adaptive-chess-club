@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <rect width="120" height="120" fill="#1C2320"/>
+  <!-- Head -->
+  <circle cx="60" cy="42" r="20" fill="#2E3430"/>
+  <!-- Body -->
+  <path d="M20 115 Q20 80 60 78 Q100 80 100 115Z" fill="#2E3430"/>
+  <!-- Chess pawn silhouette overlay -->
+  <circle cx="60" cy="42" r="13" fill="#3A4038"/>
+  <rect x="52" y="55" width="16" height="10" rx="1" fill="#3A4038"/>
+  <rect x="48" y="65" width="24" height="6" rx="1" fill="#3A4038"/>
+  <!-- Brass corner marks -->
+  <path d="M6 6 L6 14 M6 6 L14 6" stroke="#8E7649" stroke-width="1.5" fill="none"/>
+  <path d="M114 6 L106 6 M114 6 L114 14" stroke="#8E7649" stroke-width="1.5" fill="none"/>
+  <path d="M6 114 L6 106 M6 114 L14 114" stroke="#8E7649" stroke-width="1.5" fill="none"/>
+  <path d="M114 114 L106 114 M114 114 L114 106" stroke="#8E7649" stroke-width="1.5" fill="none"/>
+</svg>

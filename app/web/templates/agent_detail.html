@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block title %}{{ agent.name }} — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="mp-enter mp-enter-1 mb-2">
+  <a href="/agents" class="text-[12px] text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink-muted)] transition">← Back to My Agents</a>
+</div>
+
+{% if flash %}
+<div class="mb-5 rounded-sm border border-[rgba(47,107,92,0.4)] bg-[rgba(47,107,92,0.10)] p-3 text-sm text-[var(--mp-felt-bright)]">
+  {% if flash == 'saved' %}Changes saved.
+  {% else %}{{ flash }}{% endif %}
+</div>
+{% endif %}
+
+{% if error %}
+<div class="mb-5 rounded-sm border border-[rgba(168,66,63,0.4)] bg-[rgba(168,66,63,0.08)] p-3 text-sm text-[#E79E9B]">
+  {% if error == 'name_length' %}Name must be {{ name_min }}–{{ name_max }} characters.
+  {% elif error == 'name_taken' %}You already have an active agent with that name.
+  {% elif error == 'personality_too_short' %}Personality must be at least {{ personality_min }} characters.
+  {% elif error == 'personality_too_long' %}Personality must be {{ personality_max }} characters or fewer.
+  {% else %}{{ error }}{% endif %}
+</div>
+{% endif %}
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mp-enter mp-enter-1">
+
+  {# --- Left: Avatar + Stats --- #}
+  <div class="space-y-4">
+    <div class="mp-panel rounded-sm p-5 mp-framed">
+      <div class="mp-frame-tl"></div>
+      <div class="mp-frame-br"></div>
+
+      <div class="flex items-center gap-4 mb-5">
+        <div class="shrink-0 w-20 h-20 flex items-center justify-center border border-[var(--mp-brass-dim)] bg-[var(--mp-surface-2)] rounded-sm overflow-hidden">
+          {% if agent.avatar_image_url %}
+          <img src="{{ agent.avatar_image_url }}" alt="{{ agent.name }}" class="w-full h-full object-cover" />
+          {% else %}
+          <img src="/static/img/agent_placeholder.svg" alt="Agent placeholder" class="w-full h-full object-cover opacity-60" />
+          {% endif %}
+        </div>
+        <div>
+          <div class="mp-eyebrow mb-1">Agent</div>
+          <div class="mp-display text-[26px] tracking-tight">{{ agent.name }}</div>
+        </div>
+      </div>
+
+      <div class="mp-brass-rule mb-4"></div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <div class="mp-eyebrow mb-1">Elo</div>
+          <div class="mp-mono text-[20px] text-[var(--mp-brass)]">{{ agent.elo }}</div>
+        </div>
+        <div>
+          <div class="mp-eyebrow mb-1">Matches</div>
+          <div class="mp-mono text-[20px] text-[var(--mp-ink-muted)]">—</div>
+        </div>
+      </div>
+
+      <div class="mt-4 text-[11px] text-[var(--mp-ink-faint)]">
+        Created {{ agent.created_at.strftime('%b %d, %Y') }}
+      </div>
+    </div>
+
+    {# MetropolisX placeholder #}
+    <div class="mp-panel rounded-sm p-4 border-dashed border border-[var(--mp-hairline-2)]">
+      <div class="mp-eyebrow mb-2" style="color: var(--mp-brass-dim);">MetropolisX Avatar</div>
+      <div class="text-[12px] text-[var(--mp-ink-faint)] leading-relaxed">
+        Avatar will sync from MetropolisX when available.
+        {% if agent.metropolis_token_id %}
+        <div class="mt-2 mp-mono text-[10px] text-[var(--mp-ink-ghost)] break-all">Token: {{ agent.metropolis_token_id }}</div>
+        {% else %}
+        No token linked yet.
+        {% endif %}
+      </div>
+    </div>
+
+    {# Recent matches placeholder — Block 13 #}
+    <div class="mp-panel rounded-sm p-4">
+      <div class="mp-eyebrow mb-3">Recent Matches</div>
+      <div class="text-[12px] text-[var(--mp-ink-faint)] text-center py-4">
+        Match history available once agent plays. <em>(Coming in Block 13.)</em>
+      </div>
+    </div>
+  </div>
+
+  {# --- Right: Edit form + archive --- #}
+  <div class="lg:col-span-2 space-y-5">
+    <div class="mp-panel rounded-sm p-6">
+      <div class="mp-eyebrow mb-4">Edit Agent</div>
+
+      <form action="/agents/{{ agent.id }}/edit" method="post" class="space-y-5">
+        <div>
+          <label class="block mp-eyebrow mb-2">Name</label>
+          <input
+            type="text"
+            name="name"
+            value="{{ agent.name }}"
+            class="mp-input w-full"
+            minlength="{{ name_min }}"
+            maxlength="{{ name_max }}"
+            required
+          />
+          <div class="text-[11px] text-[var(--mp-ink-faint)] mt-1">{{ name_min }}–{{ name_max }} characters. Must be unique among your active agents.</div>
+        </div>
+
+        <div>
+          <label class="block mp-eyebrow mb-2">Personality Description</label>
+          <textarea
+            name="personality_description"
+            class="mp-input w-full resize-y"
+            rows="7"
+            minlength="{{ personality_min }}"
+            maxlength="{{ personality_max }}"
+            placeholder="{{ personality_placeholder }}"
+            required
+          >{{ agent.personality_description }}</textarea>
+          <div class="text-[11px] text-[var(--mp-ink-faint)] mt-1">
+            {{ personality_min }}–{{ personality_max }} characters.
+            <span id="char-count" class="mp-mono"></span>
+          </div>
+        </div>
+
+        <div class="mp-brass-rule"></div>
+        <button type="submit" class="mp-btn mp-btn-brass">Save Changes</button>
+      </form>
+    </div>
+
+    {# Archive section #}
+    <div class="mp-panel rounded-sm p-5 border-[rgba(168,66,63,0.25)]">
+      <div class="mp-eyebrow mb-2" style="color: var(--mp-oxblood);">Archive Agent</div>
+      <p class="text-[13px] text-[var(--mp-ink-muted)] mb-4">
+        Archiving hides the agent from your roster. It won't count toward your 3-agent limit.
+        Archived agents cannot be restored from the UI (yet).
+      </p>
+      <form action="/agents/{{ agent.id }}/archive" method="post" onsubmit="return confirm('Archive {{ agent.name }}? This cannot be undone from the UI.')">
+        <button type="submit" class="mp-btn mp-btn-danger">Archive Agent</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Live character counter for the personality textarea.
+  const ta = document.querySelector('textarea[name="personality_description"]');
+  const counter = document.getElementById('char-count');
+  if (ta && counter) {
+    const max = {{ personality_max }};
+    function update() {
+      const len = ta.value.length;
+      counter.textContent = `${len} / ${max}`;
+      counter.style.color = len > max ? 'var(--mp-oxblood)' : 'var(--mp-ink-faint)';
+    }
+    ta.addEventListener('input', update);
+    update();
+  }
+</script>
+{% endblock %}
