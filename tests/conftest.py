@@ -34,6 +34,7 @@ from app.models.lobby import (  # noqa: E402
 )
 from app.models.match import Match, MatchAnalysis, Move, OpponentProfile, Player  # noqa: E402
 from app.models.memory import Memory  # noqa: E402
+from app.models.player_agent import PlayerAgent  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -48,6 +49,7 @@ def _clean_tables():
         conn.execute(delete(MatchAnalysis))
         conn.execute(delete(Move))
         conn.execute(delete(Match))
+        conn.execute(delete(PlayerAgent))
         conn.execute(delete(OpponentProfile))
         conn.execute(delete(PvpMatch))
         conn.execute(delete(MatchmakingQueue))
