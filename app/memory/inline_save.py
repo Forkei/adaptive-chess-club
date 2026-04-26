@@ -36,14 +36,21 @@ def _cosine_sim(a: list[float], b: list[float]) -> float:
 def _is_near_duplicate(
     session,
     *,
-    character_id: str,
+    character_id: str | None = None,
+    agent_id: str | None = None,
     player_id: str,
     proposed_embedding: list[float],
 ) -> bool:
+    if agent_id is not None:
+        scope_filter = Memory.agent_id == agent_id
+    elif character_id is not None:
+        scope_filter = Memory.character_id == character_id
+    else:
+        raise ValueError("_is_near_duplicate requires character_id or agent_id")
     stmt = (
         select(Memory.embedding)
         .where(
-            Memory.character_id == character_id,
+            scope_filter,
             Memory.player_id == player_id,
             Memory.scope == MemoryScope.OPPONENT_SPECIFIC,
             Memory.embedding.is_not(None),
@@ -58,7 +65,8 @@ def _is_near_duplicate(
 async def save_inline_memory(
     request: InlineMemoryRequest,
     *,
-    character_id: str,
+    character_id: str | None = None,
+    agent_id: str | None = None,
     player_id: str,
     match_id: str | None = None,
 ) -> None:
@@ -66,7 +74,10 @@ async def save_inline_memory(
 
     Fire-and-forget: call as ``asyncio.create_task(save_inline_memory(...))``.
     Survives client disconnect. Logs and returns silently on any error.
+
+    Pass either ``character_id`` (character room) or ``agent_id`` (agent room).
     """
+    scope_label = agent_id or character_id
     try:
         embed_input = build_memory_embedding_input(
             narrative_text=request.narrative_text,
@@ -80,12 +91,13 @@ async def save_inline_memory(
             if _is_near_duplicate(
                 session,
                 character_id=character_id,
+                agent_id=agent_id,
                 player_id=player_id,
                 proposed_embedding=proposed_embedding,
             ):
                 logger.info(
-                    "inline_memory_dedup_skipped player=%s character=%s match=%s",
-                    player_id, character_id, match_id,
+                    "inline_memory_dedup_skipped player=%s scope=%s match=%s",
+                    player_id, scope_label, match_id,
                 )
                 return
 
@@ -102,6 +114,7 @@ async def save_inline_memory(
             # bulk_create handles embedding; pass embed=False since we already have it.
             row = Memory(
                 character_id=character_id,
+                agent_id=agent_id,
                 player_id=item.player_id,
                 match_id=item.match_id,
                 scope=item.scope,
@@ -118,13 +131,13 @@ async def save_inline_memory(
             session.commit()
 
         logger.info(
-            "inline_memory_saved player=%s character=%s match=%s triggers=%s",
-            player_id, character_id, match_id, list(request.triggers),
+            "inline_memory_saved player=%s scope=%s match=%s triggers=%s",
+            player_id, scope_label, match_id, list(request.triggers),
         )
 
     except Exception:
         logger.warning(
-            "inline_memory_failed player=%s character=%s match=%s — skipping",
-            player_id, character_id, match_id,
+            "inline_memory_failed player=%s scope=%s match=%s — skipping",
+            player_id, scope_label, match_id,
             exc_info=True,
         )

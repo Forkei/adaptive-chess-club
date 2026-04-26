@@ -156,3 +156,76 @@ def run_soul(
             return _fallback_response()
 
     return _sanitize(raw, inp.surfaced_memories)
+
+
+def run_agent_soul_for_room(
+    system_prompt: str,
+    inp: SoulInput,
+    *,
+    llm: LLMClient | None = None,
+) -> SoulResponse:
+    """Run Soul for the agent pre-match room using a pre-built system prompt.
+
+    Builds a simplified pre-match user prompt (no live chess board context).
+    The only game_action the agent should emit here is 'start_match_vs_kenji'.
+    """
+    recent = (
+        "\n".join(f"- {line}" for line in (inp.recent_chat or [])[-5:])
+        or "(no recent chat)"
+    )
+    speaking_hint = (
+        "The player just spoke to you — respond most of the time."
+        if inp.player_just_spoke
+        else "The player did not speak this turn."
+    )
+    from app.agents.prompts import _format_surfaced_memories
+    memories_str = _format_surfaced_memories(inp.surfaced_memories or [])
+
+    user = (
+        "=== AGENT PRE-MATCH ROOM ===\n"
+        "Your owner is speaking to you before a potential match vs Kenji.\n\n"
+        "=== RECENT CHAT (oldest → newest) ===\n"
+        f"{recent}\n\n"
+        "=== MEMORIES SURFACED BY YOUR SUBCONSCIOUS ===\n"
+        f"{memories_str}\n\n"
+        "=== INSTRUCTIONS ===\n"
+        f"{speaking_hint}\n"
+        "Use game_action='start_match_vs_kenji' ONLY when your owner explicitly orders a match vs Kenji "
+        "('go play Kenji', 'challenge Kenji', 'start the match', 'let's go', etc.). "
+        "For everything else use 'none'.\n"
+        "Produce the JSON response now."
+    )
+    prompt = f"{system_prompt}\n\n---\n\n{user}"
+
+    client = llm
+    if client is None:
+        try:
+            client = get_llm_client()
+        except LLMError as exc:
+            logger.warning("Agent Soul: LLM unavailable (%s); returning silent fallback", exc)
+            return _fallback_response()
+
+    try:
+        raw = client.generate_structured(
+            prompt=prompt,
+            response_schema=SoulResponse,
+            response_adapter=_SOUL_ADAPTER,
+            temperature=0.85,
+            max_output_tokens=800,
+            call_tag=f"agent_soul_room:{inp.match_id}",
+        )
+    except LLMError as exc:
+        logger.warning("Agent Soul LLM call failed (%s); returning silent fallback", exc)
+        return _fallback_response()
+    except Exception as exc:
+        logger.exception("Agent Soul unexpected error (%s); returning silent fallback", exc)
+        return _fallback_response()
+
+    if not isinstance(raw, SoulResponse):
+        try:
+            raw = _SOUL_ADAPTER.validate_python(raw)
+        except Exception as exc:
+            logger.warning("Agent Soul output failed validation (%s); silent fallback", exc)
+            return _fallback_response()
+
+    return _sanitize(raw, inp.surfaced_memories)

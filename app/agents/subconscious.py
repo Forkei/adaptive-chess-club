@@ -158,9 +158,12 @@ class SubconsciousInput:
     Keeping it a dataclass (not a dependency on the match Session) means
     tests can exercise the pipeline with fabricated inputs + an in-memory
     SQLAlchemy session.
+
+    Either character_id (character turn) or agent_id (agent turn, Block 13)
+    must be set. When agent_id is set, memory retrieval scopes to that agent.
     """
 
-    character_id: str
+    character_id: str  # kept for back-compat; ignored when agent_id is set
     match_id: str
     current_turn: int
     board_summary: BoardSummary
@@ -172,6 +175,7 @@ class SubconsciousInput:
     opening_label: str | None = None
     current_player_id: str | None = None
     opponent_style_features: dict | None = None
+    agent_id: str | None = None  # Block 13: set for agent-side subconscious calls
 
 
 # --- Pipeline --------------------------------------------------------------
@@ -387,11 +391,16 @@ def run_subconscious(
         inp.match_id, inp.current_turn, cache_key, hit_rate,
     )
 
-    # Fast-path: if this character has no memories, nothing to surface.
+    # Fast-path: if this character/agent has no memories, nothing to surface.
     from sqlalchemy import select as _select
     from app.models.memory import Memory as _Memory
+    scope_filter = (
+        _Memory.agent_id == inp.agent_id
+        if inp.agent_id is not None
+        else _Memory.character_id == inp.character_id
+    )
     has_any = session.execute(
-        _select(_Memory.id).where(_Memory.character_id == inp.character_id).limit(1)
+        _select(_Memory.id).where(scope_filter).limit(1)
     ).scalar_one_or_none()
     if not has_any:
         return []
@@ -409,22 +418,18 @@ def run_subconscious(
             session,
             query_embedding=query_vec,
             k=CANDIDATE_POOL,
-            character_id=inp.character_id,
-            # Restrict to memories for the current player (or no specific player, i.e. character
-            # lore / cross-player). Without this filter, opponent-specific memories for *other*
-            # players compete for the CANDIDATE_POOL slots and can crowd out the current player's
-            # memories as the corpus grows — even though those other-player memories score 0 on
-            # opponent_relevance and would never surface anyway.
+            character_id=inp.character_id if inp.agent_id is None else None,
+            agent_id=inp.agent_id,
             player_id=inp.current_player_id,
         )
         semantic_by_id: dict[str, float] = {h.memory_id: h.score for h in hits}
         candidate_ids = list(semantic_by_id.keys())
     else:
-        # No vector — fall back to all memories for this character/player.
+        # No vector — fall back to all memories for this character/agent.
         from sqlalchemy import select
         from app.models.memory import Memory as _Mem
-        stmt = select(_Mem).where(_Mem.character_id == inp.character_id)
-        if inp.current_player_id is not None:
+        stmt = select(_Mem).where(scope_filter)
+        if inp.current_player_id is not None and inp.agent_id is None:
             stmt = stmt.where(
                 (_Mem.player_id == inp.current_player_id) | (_Mem.player_id.is_(None))
             )

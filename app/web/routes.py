@@ -1282,6 +1282,12 @@ def match_page(
                 "emotion_intensity": t.emotion_intensity,
             })
 
+    # For agent_vs_character: look up the participating agent for display.
+    participant_agent = None
+    if match.match_kind == "agent_vs_character" and match.participant_agent_id:
+        from app.models.player_agent import PlayerAgent
+        participant_agent = session.get(PlayerAgent, match.participant_agent_id)
+
     return templates.TemplateResponse(
         request,
         "play.html",
@@ -1294,6 +1300,7 @@ def match_page(
             "has_real_engine": bool(real_engines),
             "room": _room_for_match(character),
             "pre_match_chat": pre_match_chat,
+            "participant_agent": participant_agent,
         },
     )
 
@@ -1489,6 +1496,35 @@ def agent_detail_page(
     if agent.owner_player_id != player.id:
         raise HTTPException(status_code=403, detail="Not your agent.")
 
+    from sqlalchemy import func
+    from app.models.match import Match, MatchStatus
+    from app.models.character import Character
+
+    total_match_count = session.execute(
+        select(func.count()).select_from(Match).where(Match.participant_agent_id == agent_id)
+    ).scalar_one()
+
+    recent_matches_rows = session.execute(
+        select(Match)
+        .where(Match.participant_agent_id == agent_id)
+        .order_by(Match.started_at.desc())
+        .limit(5)
+    ).scalars().all()
+
+    recent_matches = []
+    for m in recent_matches_rows:
+        char = session.get(Character, m.character_id)
+        recent_matches.append({
+            "id": m.id,
+            "character_name": char.name if char else "Unknown",
+            "character_emoji": char.avatar_emoji if char else "♟",
+            "status": m.status.value,
+            "result": m.result.value if m.result else None,
+            "player_color": m.player_color.value,
+            "created_at": m.started_at,
+            "move_count": m.move_count,
+        })
+
     return templates.TemplateResponse(
         request,
         "agent_detail.html",
@@ -1502,6 +1538,8 @@ def agent_detail_page(
             "personality_max": _PERSONALITY_MAX,
             "name_min": _AGENT_NAME_MIN,
             "name_max": _AGENT_NAME_MAX,
+            "recent_matches": recent_matches,
+            "total_match_count": total_match_count,
         },
     )
 
@@ -1573,6 +1611,27 @@ def archive_agent(
     agent.archived_at = datetime.utcnow()
     session.commit()
     return RedirectResponse(url="/agents", status_code=303)
+
+
+@router.get("/agents/{agent_id}/room", response_class=HTMLResponse)
+def agent_room_page(
+    request: Request,
+    agent_id: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    from app.models.player_agent import PlayerAgent
+
+    agent = session.get(PlayerAgent, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.owner_player_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your agent.")
+
+    return templates.TemplateResponse(
+        "agent_room.html",
+        {"request": request, "agent": agent, "player": player},
+    )
 
 
 @router.get("/matches/{match_id}/summary", response_class=HTMLResponse)

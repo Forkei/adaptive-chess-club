@@ -56,7 +56,7 @@
         </div>
         <div>
           <div class="mp-eyebrow mb-1">Matches</div>
-          <div class="mp-mono text-[20px] text-[var(--mp-ink-muted)]">—</div>
+          <div class="mp-mono text-[20px] text-[var(--mp-ink-muted)]">{{ total_match_count or 0 }}</div>
         </div>
       </div>
 
@@ -78,12 +78,62 @@
       </div>
     </div>
 
-    {# Recent matches placeholder — Block 13 #}
+    {# Briefing room link #}
+    <div class="mp-panel rounded-sm p-4">
+      <div class="mp-eyebrow mb-3">Briefing Room</div>
+      <p class="text-[12px] text-[var(--mp-ink-muted)] mb-3">
+        Talk to your agent before a match — brief them, check their mood, send them to challenge Kenji.
+      </p>
+      <a href="/agents/{{ agent.id }}/room" class="mp-btn mp-btn-brass w-full text-center block">Enter Briefing Room</a>
+    </div>
+
+    {# Recent matches #}
     <div class="mp-panel rounded-sm p-4">
       <div class="mp-eyebrow mb-3">Recent Matches</div>
-      <div class="text-[12px] text-[var(--mp-ink-faint)] text-center py-4">
-        Match history available once agent plays. <em>(Coming in Block 13.)</em>
+      {% if recent_matches %}
+      <div class="space-y-2">
+        {% for m in recent_matches %}
+        <a href="/play/{{ m.id }}"
+           class="flex items-center gap-3 rounded-sm px-3 py-2 bg-[var(--mp-surface-2)] hover:bg-[var(--mp-surface-3)] transition text-[12px] no-underline">
+          <span class="text-[18px] leading-none">{{ m.character_emoji }}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-[var(--mp-ink)] truncate">vs {{ m.character_name }}</div>
+            <div class="text-[10px] text-[var(--mp-ink-faint)] mp-mono">
+              {{ m.player_color }} · {{ m.move_count }} moves ·
+              {{ m.created_at.strftime('%b %d') }}
+            </div>
+          </div>
+          <div class="text-right shrink-0">
+            {% if m.status == 'in_progress' %}
+              <span class="text-[11px] text-[var(--mp-felt-bright)] mp-mono">live</span>
+            {% elif m.result == '1-0' %}
+              {% if m.player_color == 'white' %}
+                <span class="text-[11px] text-[var(--mp-felt-bright)] mp-mono">win</span>
+              {% else %}
+                <span class="text-[11px] text-[#E79E9B] mp-mono">loss</span>
+              {% endif %}
+            {% elif m.result == '0-1' %}
+              {% if m.player_color == 'black' %}
+                <span class="text-[11px] text-[var(--mp-felt-bright)] mp-mono">win</span>
+              {% else %}
+                <span class="text-[11px] text-[#E79E9B] mp-mono">loss</span>
+              {% endif %}
+            {% elif m.result == '1/2-1/2' %}
+              <span class="text-[11px] text-[var(--mp-brass)] mp-mono">draw</span>
+            {% elif m.status == 'abandoned' %}
+              <span class="text-[11px] text-[var(--mp-ink-faint)] mp-mono">—</span>
+            {% else %}
+              <span class="text-[11px] text-[var(--mp-ink-faint)] mp-mono">—</span>
+            {% endif %}
+          </div>
+        </a>
+        {% endfor %}
       </div>
+      {% else %}
+      <div class="text-[12px] text-[var(--mp-ink-faint)] text-center py-4">
+        No matches yet. Send your agent to the Briefing Room to start a game.
+      </div>
+      {% endif %}
     </div>
   </div>
 

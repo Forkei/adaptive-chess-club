@@ -31,7 +31,7 @@ from http.cookies import SimpleCookie
 from typing import Any
 from urllib.parse import parse_qs
 
-from app.agents.soul import SoulInput, run_soul
+from app.agents.soul import SoulInput, _fallback_response, run_agent_soul_for_room, run_soul
 from app.agents.subconscious import SubconsciousInput, run_subconscious
 from app.auth import PLAYER_COOKIE
 from app.db import SessionLocal
@@ -61,6 +61,7 @@ S2C_AGENT_THINKING = "agent_thinking"
 S2C_AGENT_CHAT = "agent_chat"
 S2C_AGENT_ERROR = "agent_error"
 S2C_GAME_STARTED = "game_started"
+S2C_MATCH_VS_KENJI_STARTED = "match_vs_kenji_started"
 S2C_GREETING_DONE = "greeting_done"
 S2C_PLAYER_CHAT_RATE_LIMITED = "player_chat_rate_limited"
 S2C_ERROR = "error"
@@ -134,6 +135,11 @@ async def _on_connect(sid, environ, auth):
         logger.info("Room socket rejected: no cookie (sid=%s)", sid)
         return False
 
+    # Agent room mode: agent_id param takes priority over character_id.
+    agent_id = _query_param(auth, environ, "agent_id")
+    if agent_id:
+        return await _on_connect_agent(sid, environ, auth, player_id, agent_id)
+
     character_id = _query_param(auth, environ, "character_id")
     if not character_id:
         logger.info("Room socket rejected: no character_id (sid=%s)", sid)
@@ -200,6 +206,7 @@ async def _on_connect(sid, environ, auth):
             "player_id": player_id,
             "character_id": character_id,
             "chat_session_id": chat_session_id,
+            "mode": "character",
         },
         namespace=ROOM_NAMESPACE,
     )
@@ -224,6 +231,49 @@ async def _on_connect(sid, environ, auth):
             _locked_fire_greeting(chat_session_id, character_id, player_id),
             name=f"greeting-{chat_session_id}",
         )
+
+
+async def _on_connect_agent(
+    sid: str,
+    environ: dict,
+    auth: Any,
+    player_id: str,
+    agent_id: str,
+) -> bool | None:
+    """Handle connect for agent room mode (/room?agent_id=...)."""
+    with SessionLocal() as session:
+        player = session.get(Player, player_id)
+        if player is None:
+            logger.info("Agent room rejected: invalid player cookie (sid=%s)", sid)
+            return False
+
+        from app.models.player_agent import PlayerAgent
+        agent = session.get(PlayerAgent, agent_id)
+        if agent is None or agent.archived_at is not None:
+            logger.info("Agent room rejected: agent not found (sid=%s agent=%s)", sid, agent_id)
+            return False
+        if agent.owner_player_id != player.id:
+            logger.info("Agent room rejected: not owner (sid=%s agent=%s)", sid, agent_id)
+            return False
+
+    await sio.save_session(
+        sid,
+        {
+            "player_id": player_id,
+            "agent_id": agent_id,
+            "recent_chat": [],
+            "mode": "agent",
+        },
+        namespace=ROOM_NAMESPACE,
+    )
+
+    await sio.emit(
+        S2C_ROOM_STATE,
+        {"agent_id": agent_id, "turns": []},
+        to=sid,
+        namespace=ROOM_NAMESPACE,
+    )
+    logger.info("Agent room connect sid=%s player=%s agent=%s", sid, player_id, agent_id)
 
 
 @sio.on("disconnect", namespace=ROOM_NAMESPACE)
@@ -361,13 +411,7 @@ async def _run_pipeline_locked(
 @sio.on(C2S_PLAYER_CHAT, namespace=ROOM_NAMESPACE)
 async def _on_player_chat(sid, data):
     sess = await sio.get_session(sid, namespace=ROOM_NAMESPACE)
-    chat_session_id = sess.get("chat_session_id")
-    character_id = sess.get("character_id")
-    player_id = sess.get("player_id")
-
-    if not chat_session_id or not character_id or not player_id:
-        await _send_error(sid, "no_session", "Socket has no bound chat session.")
-        return
+    mode = sess.get("mode", "character")
 
     if not isinstance(data, dict) or not data.get("text"):
         await _send_error(sid, "bad_payload", "Missing text field.")
@@ -387,6 +431,52 @@ async def _on_player_chat(sid, data):
             to=sid,
             namespace=ROOM_NAMESPACE,
         )
+        return
+
+    if mode == "agent":
+        agent_id = sess.get("agent_id")
+        player_id = sess.get("player_id")
+        recent_chat = list(sess.get("recent_chat") or [])
+        if not agent_id or not player_id:
+            await _send_error(sid, "no_session", "Socket has no bound agent session.")
+            return
+
+        import uuid as _uuid
+        turn_id = str(_uuid.uuid4())
+        created_at_iso = datetime.utcnow().isoformat() + "Z"
+        await sio.emit(
+            S2C_PLAYER_CHAT_ACK,
+            {"turn_id": turn_id, "text": text, "created_at": created_at_iso},
+            to=sid,
+            namespace=ROOM_NAMESPACE,
+        )
+
+        new_chat = recent_chat + [f"player: {text}"]
+        await sio.save_session(
+            sid,
+            {**sess, "recent_chat": new_chat[-20:]},
+            namespace=ROOM_NAMESPACE,
+        )
+
+        asyncio.create_task(
+            run_agent_room_pipeline(
+                sid=sid,
+                agent_id=agent_id,
+                player_id=player_id,
+                player_text=text,
+                recent_chat=recent_chat,
+            ),
+            name=f"agent-pipeline-{agent_id}",
+        )
+        return
+
+    # --- Character room mode (existing) ---
+    chat_session_id = sess.get("chat_session_id")
+    character_id = sess.get("character_id")
+    player_id = sess.get("player_id")
+
+    if not chat_session_id or not character_id or not player_id:
+        await _send_error(sid, "no_session", "Socket has no bound chat session.")
         return
 
     # Persist player turn immediately, emit ack, then fire background pipeline.
@@ -639,5 +729,167 @@ async def run_room_agent_pipeline(
                 S2C_AGENT_ERROR,
                 {"message": "Failed to start the game. Try saying 'let's play' again."},
                 room=room,
+                namespace=ROOM_NAMESPACE,
+            )
+
+
+# --- Agent room pipeline --------------------------------------------------
+
+
+async def run_agent_room_pipeline(
+    *,
+    sid: str,
+    agent_id: str,
+    player_id: str,
+    player_text: str,
+    recent_chat: list[str],
+) -> None:
+    """Async Subconscious → Soul pipeline for agent pre-match chat.
+
+    Emits agent_thinking, agent_chat (with game_action), and on
+    start_match_vs_kenji emits match_vs_kenji_started to the client.
+    """
+    await sio.emit(S2C_AGENT_THINKING, {}, to=sid, namespace=ROOM_NAMESPACE)
+
+    from app.characters.chat_service import _idle_board_summary
+    from app.director.mood import MoodState
+
+    board = _idle_board_summary()
+    mood = MoodState()
+    chat_context = recent_chat + [f"player: {player_text}"]
+
+    # --- Subconscious -------------------------------------------------------
+    surfaced = []
+    try:
+        sub_input = SubconsciousInput(
+            character_id="",  # ignored when agent_id is set
+            agent_id=agent_id,
+            match_id=f"agent-room:{agent_id}",
+            current_turn=1,
+            board_summary=board,
+            mood=mood,
+            last_player_uci=None,
+            last_player_chat=player_text,
+            last_moves_san=[],
+            recent_chat=chat_context,
+            opening_label=None,
+            current_player_id=player_id,
+        )
+
+        def _sub_call():
+            import types
+            with SessionLocal() as s:
+                from app.models.player_agent import PlayerAgent
+                ag = s.get(PlayerAgent, agent_id)
+                if ag is None:
+                    return []
+                char_proxy = types.SimpleNamespace(name=ag.name)
+                return run_subconscious(s, char_proxy, sub_input) or []  # type: ignore[arg-type]
+
+        surfaced = await asyncio.wait_for(asyncio.to_thread(_sub_call), timeout=30.0)
+    except Exception:
+        logger.exception("[room/agent] subconscious failed for agent=%s", agent_id)
+
+    # --- Soul ---------------------------------------------------------------
+    soul_resp: SoulResponse
+    try:
+        def _soul_call():
+            with SessionLocal() as s:
+                from app.models.player_agent import PlayerAgent
+                ag = s.get(PlayerAgent, agent_id)
+                if ag is None:
+                    return _fallback_response()
+                from app.agents.prompts import build_agent_system_prompt
+                system = build_agent_system_prompt(ag)
+                soul_inp = SoulInput(
+                    board=board,
+                    mood=mood,
+                    surfaced_memories=surfaced,
+                    recent_chat=chat_context,
+                    engine_move_san="",
+                    engine_move_uci="",
+                    engine_eval_cp=None,
+                    engine_considered=None,
+                    engine_time_ms=None,
+                    move_number=0,
+                    game_phase="pre-match",
+                    player_just_spoke=True,
+                    last_player_chat=player_text,
+                    match_id=f"agent-room:{agent_id}",
+                    character_color="white",
+                )
+                return run_agent_soul_for_room(system, soul_inp)
+
+        soul_resp = await asyncio.wait_for(asyncio.to_thread(_soul_call), timeout=30.0)
+    except Exception:
+        logger.exception("[room/agent] soul failed for agent=%s", agent_id)
+        soul_resp = _fallback_response()
+
+    # --- Inline memory (fire-and-forget) ------------------------------------
+    if soul_resp.save_memory:
+        asyncio.create_task(
+            save_inline_memory(
+                soul_resp.save_memory,
+                agent_id=agent_id,
+                player_id=player_id,
+                match_id=None,
+            )
+        )
+
+    # --- Emit agent_chat ----------------------------------------------------
+    await sio.emit(
+        S2C_AGENT_CHAT,
+        {
+            "text": soul_resp.speak or "…",
+            "emotion": soul_resp.emotion,
+            "emotion_intensity": soul_resp.emotion_intensity,
+            "game_action": soul_resp.game_action,
+        },
+        to=sid,
+        namespace=ROOM_NAMESPACE,
+    )
+
+    # --- Handle start_match_vs_kenji ----------------------------------------
+    if soul_resp.game_action == "start_match_vs_kenji":
+        try:
+            def _create_match():
+                from app.matches.service import create_agent_match
+                with SessionLocal() as s:
+                    match = create_agent_match(
+                        s,
+                        agent_id=agent_id,
+                        player_id=player_id,
+                        character_preset_key="kenji_sato",
+                    )
+                    match_id = match.id
+                    s.commit()
+                return match_id
+
+            match_id = await asyncio.to_thread(_create_match)
+            await sio.emit(
+                S2C_MATCH_VS_KENJI_STARTED,
+                {
+                    "match_id": match_id,
+                    "redirect_url": f"/matches/{match_id}",
+                },
+                to=sid,
+                namespace=ROOM_NAMESPACE,
+            )
+            logger.info(
+                "[room/agent] match_vs_kenji_started agent=%s player=%s match=%s",
+                agent_id, player_id, match_id,
+            )
+            # Launch the automated match loop (Commit 5).
+            from app.matches.agent_streaming import run_agent_match_loop
+            asyncio.create_task(
+                run_agent_match_loop(match_id, agent_id),
+                name=f"agent-loop-{match_id}",
+            )
+        except Exception:
+            logger.exception("[room/agent] match creation failed for agent=%s", agent_id)
+            await sio.emit(
+                S2C_AGENT_ERROR,
+                {"message": "Failed to start the match. Try telling your agent to go again."},
+                to=sid,
                 namespace=ROOM_NAMESPACE,
             )

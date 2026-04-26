@@ -49,8 +49,13 @@ class Memory(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
 
-    character_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False, index=True
+    # character_id is NULL for agent-scoped memories (agent_id is set instead).
+    character_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # Block 13: agent-scoped memories have agent_id set, character_id=NULL.
+    agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("player_agents.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # player_id / match_id are not FK'd to real tables yet (those arrive in Phase 2).
     # Nullable strings keep the schema future-proof without requiring those tables now.

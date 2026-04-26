@@ -56,12 +56,16 @@ def search(
     *,
     query_embedding: list[float],
     k: int,
-    character_id: str,
+    character_id: str | None = None,
+    agent_id: str | None = None,
     scope: MemoryScope | None = None,
     player_id: str | None = None,
     include_null_player: bool = True,
 ) -> list[VectorHit]:
-    """Return top-k memories for `character_id` ranked by cosine similarity.
+    """Return top-k memories ranked by cosine similarity.
+
+    Pass either `character_id` (for character-scoped memories) or `agent_id`
+    (for agent-scoped memories, Block 13+). Exactly one must be provided.
 
     Filters:
     - `scope`: restrict to a specific MemoryScope if given
@@ -72,7 +76,12 @@ def search(
     Memories without an embedding are skipped silently — the caller should
     run the backfill script to cover them.
     """
-    stmt = select(Memory).where(Memory.character_id == character_id)
+    if agent_id is not None:
+        stmt = select(Memory).where(Memory.agent_id == agent_id)
+    elif character_id is not None:
+        stmt = select(Memory).where(Memory.character_id == character_id)
+    else:
+        raise ValueError("search() requires either character_id or agent_id")
     if scope is not None:
         stmt = stmt.where(Memory.scope == scope)
     if player_id is not None:

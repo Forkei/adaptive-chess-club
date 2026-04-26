@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Match — {{ character.name }}{% endblock %}
+{% block title %}{% if match.match_kind == 'agent_vs_character' %}{{ participant_agent.name if participant_agent else 'Agent' }} vs {{ character.name }}{% else %}Match — {{ character.name }}{% endif %}{% endblock %}
 
 {% block head_extra %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
@@ -73,16 +73,30 @@
 
 <div id="alert-banner" class="hidden mb-5 rounded-sm border px-4 py-3 text-sm"></div>
 
+{% if match.match_kind == 'agent_vs_character' %}
+<div class="mb-4 mp-enter mp-enter-1">
+  <a href="/agents/{{ match.participant_agent_id }}/room" class="text-[12px] text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink-muted)] transition">← Back to Briefing Room</a>
+</div>
+{% endif %}
+
 <div class="flex items-start gap-6 mb-6 mp-enter mp-enter-1">
   <div class="shrink-0 w-16 h-16 flex items-center justify-center border border-[var(--mp-brass-dim)] bg-[var(--mp-surface-2)] rounded-sm text-4xl leading-none">
     {{ character.avatar_emoji or "♟" }}
   </div>
   <div class="flex-1">
+    {% if match.match_kind == 'agent_vs_character' %}
+    <div class="mp-eyebrow mb-1">Watch · agent vs character</div>
+    <h1 class="mp-display text-[32px] leading-[1] tracking-tight">{{ participant_agent.name if participant_agent else 'Agent' }} <span class="text-[var(--mp-ink-faint)] text-[22px]">vs</span> {{ character.name }}</h1>
+    <p class="text-[13px] text-[var(--mp-ink-muted)] mt-2">
+      {{ participant_agent.name if participant_agent else 'Agent' }} plays {{ match.player_color.value }} · {{ character.name }} plays {{ 'black' if match.player_color.value == 'white' else 'white' }}
+    </p>
+    {% else %}
     <div class="mp-eyebrow mb-1">Board · {{ match.player_color.value }}</div>
     <h1 class="mp-display text-[32px] leading-[1] tracking-tight">{{ character.name }}</h1>
     <p class="text-[13px] text-[var(--mp-ink-muted)] mt-2 mp-clamp-2 max-w-xl">
       {{ character.short_description }}
     </p>
+    {% endif %}
     <div class="mt-2 flex items-center gap-4 text-[11px] mp-mono uppercase tracking-[0.12em] text-[var(--mp-ink-faint)]">
       <span>~{{ match.character_elo_at_start }} Elo</span>
       <span>·</span>
@@ -129,14 +143,18 @@
       <div id="board" class="w-full max-w-[480px]"></div>
     </div>
     <div class="mt-4 flex items-center gap-3">
+      {% if match.match_kind != 'agent_vs_character' %}
       <button id="resign-btn" class="mp-btn mp-btn-danger">Resign</button>
+      {% else %}
+      <button id="resign-btn" class="hidden"></button>
+      {% endif %}
       <div id="thinking-banner" class="hidden flex items-center gap-2 text-[13px] text-[var(--mp-brass-bright)]">
         <span class="mp-livedot" style="background: var(--mp-brass-bright); box-shadow: 0 0 0 0 rgba(201,166,107,0.55);"></span>
-        <span>{{ character.name }} is thinking<span id="thinking-eta"></span>…</span>
+        <span id="thinking-name">{{ character.name }}</span><span> is thinking</span><span id="thinking-eta"></span><span>…</span>
       </div>
       <div id="composing-banner" class="hidden flex items-center gap-2 text-[13px] text-[var(--mp-ink-blue-alt)]">
         <span class="mp-livedot" style="background: var(--mp-ink-blue-alt); box-shadow: 0 0 0 0 rgba(141,164,195,0.55);"></span>
-        <span>{{ character.name }} is composing a reply…</span>
+        <span id="composing-name">{{ character.name }}</span><span> is composing a reply…</span>
       </div>
     </div>
     <div id="memory-ribbon" class="hidden mt-5 text-[13px] italic text-[var(--mp-ink-muted)] border-l-2 pl-4 memory-ribbon"
@@ -147,6 +165,31 @@
   </div>
 
   <div class="flex flex-col gap-5 min-h-[480px]">
+    {% if match.match_kind == 'agent_vs_character' %}
+    {# Watch mode: two chat columns, one per side #}
+    <div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <h2 class="mp-eyebrow mb-2">{{ character.name }}</h2>
+          <div id="chat-log" class="mp-panel rounded-sm text-sm p-4 h-[220px] overflow-y-auto space-y-2">
+            <div class="chat-placeholder text-[12px] text-[var(--mp-ink-faint)] italic">
+              {{ character.name }}'s table talk will appear here.
+            </div>
+          </div>
+        </div>
+        <div>
+          <h2 class="mp-eyebrow mb-2">{{ participant_agent.name if participant_agent else 'Agent' }}</h2>
+          <div id="chat-log-agent" class="mp-panel rounded-sm text-sm p-4 h-[220px] overflow-y-auto space-y-2">
+            <div class="chat-placeholder text-[12px] text-[var(--mp-ink-faint)] italic">
+              {{ participant_agent.name if participant_agent else 'Agent' }}'s table talk will appear here.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {# Hidden inputs kept for JS event wiring; display:none prevents interaction #}
+    <input id="chat-input" type="text" class="hidden" maxlength="500" />
+    {% else %}
     <div>
       <h2 class="mp-eyebrow mb-2">Table talk</h2>
       <div id="chat-log" class="mp-panel rounded-sm text-sm p-4 h-[220px] overflow-y-auto space-y-2">
@@ -160,6 +203,7 @@
                class="mp-input w-full" />
       </div>
     </div>
+    {% endif %}
 
     <div id="crowd-panel" class="hidden">
       <div class="flex items-center justify-between mb-2">
@@ -206,11 +250,16 @@
   const PRE_MATCH_CHAT = {{ (pre_match_chat or []) | tojson }};
   const ENGINES_AVAILABLE = {{ engines_available | tojson }};
   const HAS_REAL_ENGINE = {{ has_real_engine | tojson }};
+  const WATCH_MODE = {{ (match.match_kind == 'agent_vs_character') | tojson }};
+  const AGENT_NAME = {{ ((participant_agent.name if participant_agent else '') if match.match_kind == 'agent_vs_character' else '') | tojson }};
 
   const game = new Chess(INITIAL_FEN);
   let gameOver = INITIAL_STATUS !== "in_progress";
-  let movesBlocked = !HAS_REAL_ENGINE;
+  let movesBlocked = !HAS_REAL_ENGINE || WATCH_MODE;
   let awaitingAgent = false;
+  // Watch mode: track whose move just happened to route the upcoming agent_chat.
+  // true = agent (player_move_applied fired last), false = Kenji (agent_move fired last).
+  let lastMoverWasAgent = false;
 
   const EMOTION_COLORS = {
     neutral: "text-neutral-300", pleased: "text-emerald-300", annoyed: "text-amber-400",
@@ -390,6 +439,24 @@
     if (window.MpBoardFx) MpBoardFx.slideBubble(div);
     return div;
   }
+
+  // Watch mode: add a bubble to a named column log.
+  // colId: 'chat-log' (Kenji) | 'chat-log-agent' (agent player).
+  function addWatchBubble(colId, speakerName, text) {
+    if (!text) return null;
+    const log = document.getElementById(colId);
+    if (!log) return null;
+    const placeholder = log.querySelector('.chat-placeholder');
+    if (placeholder) placeholder.remove();
+    const div = document.createElement('div');
+    div.className = 'chat-bubble-agent rounded py-2 px-3';
+    div.innerHTML = `<span class="text-xs uppercase tracking-wider text-neutral-500">${escapeHtml(speakerName)}</span>
+                     <div class="text-sm mt-0.5">${escapeHtml(text)}</div>`;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    if (window.MpBoardFx) MpBoardFx.slideBubble(div);
+    return div;
+  }
   function escapeHtml(s) {
     return (s || '').replace(/[&<>"']/g, c => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -426,9 +493,21 @@
   }
 
   function seedChatLogFromMoves(moves) {
-    for (const m of moves) {
-      if (m.player_chat_before) addChatBubble('player', m.player_chat_before);
-      if (m.agent_chat_after) addChatBubble('agent', m.agent_chat_after);
+    if (WATCH_MODE) {
+      // In watch mode, moves alternate: player_color side = agent, other side = Kenji.
+      for (const m of moves) {
+        const isAgentMove = (m.side === PLAYER_COLOR);
+        if (isAgentMove) {
+          if (m.agent_chat_after) addWatchBubble('chat-log-agent', AGENT_NAME, m.agent_chat_after);
+        } else {
+          if (m.agent_chat_after) addWatchBubble('chat-log', CHARACTER_NAME, m.agent_chat_after);
+        }
+      }
+    } else {
+      for (const m of moves) {
+        if (m.player_chat_before) addChatBubble('player', m.player_chat_before);
+        if (m.agent_chat_after) addChatBubble('agent', m.agent_chat_after);
+      }
     }
   }
 
@@ -518,7 +597,14 @@
   });
 
   socket.on('player_move_applied', (payload) => {
-    // Add the player's move to the move list (server confirms move_number + san).
+    if (WATCH_MODE) {
+      // In watch mode the "player" is the agent — update board from server FEN.
+      lastMoverWasAgent = true;
+      if (payload.fen_after) {
+        try { game.load(payload.fen_after); board.position(payload.fen_after); } catch (_) {}
+      }
+    }
+    // Add the move to the move list (server confirms move_number + san).
     appendMoveRow({
       move_number: payload.move_number,
       side: PLAYER_COLOR,
@@ -533,6 +619,13 @@
 
   socket.on('agent_thinking', (payload) => {
     awaitingAgent = true;
+    // In watch mode, update the "thinking" name based on whose turn is coming.
+    if (WATCH_MODE) {
+      // agent_thinking fires before either a player_move_applied (agent's turn) or
+      // agent_move (Kenji's turn). We don't know which yet, so use a generic label.
+      const el = document.getElementById('thinking-name');
+      if (el) el.textContent = 'Engine';
+    }
     setThinking(true, payload.eta_seconds);
   });
 
@@ -542,6 +635,7 @@
   });
 
   socket.on('agent_move', (payload) => {
+    if (WATCH_MODE) lastMoverWasAgent = false;
     // Apply the engine move to the local board. The server is authoritative.
     try {
       game.move({
@@ -569,7 +663,15 @@
   socket.on('agent_chat', (payload) => {
     setComposing(false);
     if (payload.speak) {
-      addChatBubble('agent', payload.speak);
+      if (WATCH_MODE) {
+        if (lastMoverWasAgent) {
+          addWatchBubble('chat-log-agent', AGENT_NAME, payload.speak);
+        } else {
+          addWatchBubble('chat-log', CHARACTER_NAME, payload.speak);
+        }
+      } else {
+        addChatBubble('agent', payload.speak);
+      }
       if (window.MpSfx) MpSfx.play('page_flip', { volume: 0.6 });
     }
     setEmotion(payload.emotion, payload.emotion_intensity);
@@ -603,8 +705,12 @@
   });
 
   socket.on('post_match_complete', (payload) => {
-    document.getElementById('postmatch-headline').textContent = 'Done. Redirecting to the summary…';
-    setTimeout(() => { window.location.href = payload.summary_url; }, 1200);
+    if (WATCH_MODE) {
+      document.getElementById('postmatch-headline').textContent = 'Match complete.';
+    } else {
+      document.getElementById('postmatch-headline').textContent = 'Done. Redirecting to the summary…';
+      setTimeout(() => { window.location.href = payload.summary_url; }, 1200);
+    }
   });
 
   // Spectator-facing events (Phase 3c).
@@ -670,7 +776,7 @@
   });
 
   document.getElementById('resign-btn').addEventListener('click', () => {
-    if (gameOver) return;
+    if (WATCH_MODE || gameOver) return;
     if (!confirm('Resign this match?')) return;
     socket.emit('resign');
   });
@@ -681,7 +787,11 @@
     const statusEl = document.getElementById('match-status');
     const resultEl = document.getElementById('match-result');
     statusEl.innerHTML = '<span class="text-amber-300">Finished</span>';
-    const tail = outcome ? ` — you ${outcome}` : '';
+    let tail = '';
+    if (!WATCH_MODE && outcome) tail = ` — you ${outcome}`;
+    else if (WATCH_MODE && outcome) {
+      tail = outcome === 'won' ? ` — ${AGENT_NAME} won` : outcome === 'lost' ? ` — ${AGENT_NAME} lost` : ` — ${outcome}`;
+    }
     resultEl.textContent = `${result || 'unknown'}${tail}${reason ? ` · ${reason}` : ''}`;
   }
 
@@ -753,19 +863,19 @@
   // --- Init --------------------------------------------------------------
 
   renderMoves(INITIAL_MOVES);
-  // Phase 4.4b — pre-match chat carries over into the board view so the
-  // conversation doesn't visually restart when the game begins. A subtle
-  // divider marks where talking ended and the game began.
-  for (const t of (PRE_MATCH_CHAT || [])) {
-    addChatBubble(t.role === 'character' ? 'agent' : 'player', t.text);
-  }
-  if (PRE_MATCH_CHAT && PRE_MATCH_CHAT.length) {
-    const log = document.getElementById('chat-log');
-    const divider = document.createElement('div');
-    divider.className = 'text-[10px] uppercase tracking-[0.2em] text-center py-1 my-1';
-    divider.style.color = 'var(--mp-ink-faint)';
-    divider.textContent = '— game begins —';
-    log.appendChild(divider);
+  if (!WATCH_MODE) {
+    // Pre-match chat carries over into the board view.
+    for (const t of (PRE_MATCH_CHAT || [])) {
+      addChatBubble(t.role === 'character' ? 'agent' : 'player', t.text);
+    }
+    if (PRE_MATCH_CHAT && PRE_MATCH_CHAT.length) {
+      const log = document.getElementById('chat-log');
+      const divider = document.createElement('div');
+      divider.className = 'text-[10px] uppercase tracking-[0.2em] text-center py-1 my-1';
+      divider.style.color = 'var(--mp-ink-faint)';
+      divider.textContent = '— game begins —';
+      log.appendChild(divider);
+    }
   }
   seedChatLogFromMoves(INITIAL_MOVES);
 
@@ -774,7 +884,7 @@
 
   if (gameOver) startPostMatchPanel();
 
-  if (!HAS_REAL_ENGINE) {
+  if (!HAS_REAL_ENGINE && !WATCH_MODE) {
     showBanner('warn',
       'No real chess engine is installed — moves are disabled. Build the Docker image (torch + maia2 + stockfish) to enable gameplay.'
     );

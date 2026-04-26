@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}{{ agent.name }} — Agent Room — Metropolis Chess Club{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+<style>
+  .agent-chat-pane {
+    background: var(--mp-surface-1);
+    border: 1px solid var(--mp-hairline);
+    border-radius: 2px;
+    padding: 14px;
+    height: 420px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mp-enter mp-enter-1 mb-2">
+  <a href="/agents/{{ agent.id }}" class="text-[12px] text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink-muted)] transition">← Back to {{ agent.name }}</a>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mp-enter mp-enter-1">
+
+  {# --- Left: Agent card --- #}
+  <div class="space-y-4">
+    <div class="mp-panel rounded-sm p-5 mp-framed">
+      <div class="mp-frame-tl"></div>
+      <div class="mp-frame-br"></div>
+
+      <div class="flex items-center gap-4 mb-4">
+        <div class="shrink-0 w-16 h-16 flex items-center justify-center border border-[var(--mp-brass-dim)] bg-[var(--mp-surface-2)] rounded-sm overflow-hidden">
+          {% if agent.avatar_image_url %}
+          <img src="{{ agent.avatar_image_url }}" alt="{{ agent.name }}" class="w-full h-full object-cover" />
+          {% else %}
+          <img src="/static/img/agent_placeholder.svg" alt="Agent placeholder" class="w-full h-full object-cover opacity-60" />
+          {% endif %}
+        </div>
+        <div>
+          <div class="mp-eyebrow mb-1">Your Agent</div>
+          <div class="mp-display text-[22px] tracking-tight">{{ agent.name }}</div>
+        </div>
+      </div>
+
+      <div class="mp-brass-rule mb-3"></div>
+
+      <div class="text-[12px] text-[var(--mp-ink-muted)] leading-relaxed">
+        Briefing room. Tell your agent what to do — they'll line up a match vs Kenji when you're ready.
+      </div>
+
+      <div class="mt-4">
+        <div id="connection-status" class="text-[11px] mp-mono text-[var(--mp-ink-faint)]">Connecting…</div>
+      </div>
+    </div>
+
+    <div class="mp-panel rounded-sm p-4">
+      <div class="mp-eyebrow mb-2 text-[11px]">Quick commands</div>
+      <div class="space-y-1 text-[12px] text-[var(--mp-ink-muted)]">
+        <div>"Go challenge Kenji" — start a match</div>
+        <div>"How are you feeling?" — check mood</div>
+        <div>"What do you know about Kenji?" — memory recall</div>
+      </div>
+    </div>
+  </div>
+
+  {# --- Right: Chat --- #}
+  <div class="lg:col-span-2 space-y-4">
+    <div class="mp-panel rounded-sm p-5">
+      <div class="mp-eyebrow mb-4">Agent Briefing Room</div>
+
+      <div id="chat-pane" class="agent-chat-pane mb-4">
+        <div id="empty-hint" class="text-center text-[12px] text-[var(--mp-ink-faint)] mt-4">
+          <span class="mp-mono">{{ agent.name }} is ready.</span><br>
+          Tell your agent what you want to do.
+        </div>
+      </div>
+
+      <div id="thinking-indicator" class="hidden text-[12px] text-[var(--mp-ink-faint)] mp-mono mb-2">
+        <span class="mp-livedot"></span> {{ agent.name }} is thinking…
+      </div>
+
+      <div class="flex gap-2">
+        <input
+          id="chat-input"
+          type="text"
+          class="mp-input flex-1"
+          placeholder="Speak to your agent…"
+          maxlength="1000"
+          autocomplete="off"
+          disabled
+        />
+        <button id="send-btn" class="mp-btn mp-btn-brass" disabled>Send</button>
+      </div>
+      <div id="rate-limit-hint" class="hidden text-[11px] text-[var(--mp-oxblood)] mt-1">Slow down — one message at a time.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const AGENT_ID = {{ agent.id | tojson }};
+  const AGENT_NAME = {{ agent.name | tojson }};
+
+  const chatPane = document.getElementById('chat-pane');
+  const emptyHint = document.getElementById('empty-hint');
+  const chatInput = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('send-btn');
+  const thinkingEl = document.getElementById('thinking-indicator');
+  const statusEl = document.getElementById('connection-status');
+  const rateLimitHint = document.getElementById('rate-limit-hint');
+
+  let isThinking = false;
+
+  function scrollBottom() {
+    chatPane.scrollTop = chatPane.scrollHeight;
+  }
+
+  function hideEmptyHint() {
+    if (emptyHint) emptyHint.style.display = 'none';
+  }
+
+  function appendBubble(role, text) {
+    hideEmptyHint();
+    const div = document.createElement('div');
+    div.className = role === 'player'
+      ? 'chat-bubble-player ml-auto max-w-[75%]'
+      : 'chat-bubble-agent mr-auto max-w-[75%]';
+    div.textContent = text;
+    chatPane.appendChild(div);
+    scrollBottom();
+  }
+
+  function setThinking(on) {
+    isThinking = on;
+    thinkingEl.classList.toggle('hidden', !on);
+    chatInput.disabled = on;
+    sendBtn.disabled = on;
+  }
+
+  const socket = io('/room', {
+    query: { agent_id: AGENT_ID },
+    withCredentials: true,
+    transports: ['websocket', 'polling'],
+  });
+
+  socket.on('connect', function () {
+    statusEl.textContent = 'Connected';
+    chatInput.disabled = false;
+    sendBtn.disabled = false;
+  });
+
+  socket.on('disconnect', function () {
+    statusEl.textContent = 'Disconnected';
+    chatInput.disabled = true;
+    sendBtn.disabled = true;
+  });
+
+  socket.on('error', function (data) {
+    statusEl.textContent = 'Error: ' + (data.message || data.code);
+  });
+
+  socket.on('room_state', function (data) {
+    // Agent room starts empty — no history to replay.
+    statusEl.textContent = 'Ready';
+  });
+
+  socket.on('player_chat_ack', function (data) {
+    appendBubble('player', data.text);
+  });
+
+  socket.on('agent_thinking', function () {
+    setThinking(true);
+  });
+
+  socket.on('agent_chat', function (data) {
+    setThinking(false);
+    if (data.text) {
+      appendBubble('agent', data.text);
+    }
+    if (data.game_action === 'start_match_vs_kenji') {
+      // Server is spinning up the match — redirect when ready.
+      appendBubble('agent', '[ Starting match vs Kenji… ]');
+      socket.emit('_agent_ack_match_start', {});
+    }
+  });
+
+  socket.on('match_vs_kenji_started', function (data) {
+    window.location.href = data.redirect_url || '/matches/' + data.match_id;
+  });
+
+  socket.on('agent_error', function (data) {
+    setThinking(false);
+    appendBubble('agent', '[ Error: ' + (data.message || 'unknown') + ' ]');
+  });
+
+  socket.on('player_chat_rate_limited', function (data) {
+    rateLimitHint.classList.remove('hidden');
+    setTimeout(() => rateLimitHint.classList.add('hidden'), data.retry_after_ms || 2000);
+  });
+
+  function sendMessage() {
+    const text = chatInput.value.trim();
+    if (!text || isThinking) return;
+    chatInput.value = '';
+    socket.emit('player_chat', { text });
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+  chatInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+})();
+</script>
+{% endblock %}

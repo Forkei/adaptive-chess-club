@@ -242,6 +242,67 @@ def get_match(session: Session, match_id: str) -> Match:
     return match
 
 
+def create_agent_match(
+    session: Session,
+    *,
+    agent_id: str,
+    player_id: str,
+    character_preset_key: str = "kenji_sato",
+    player_color: str = "random",
+) -> Match:
+    """Create a match where the player's agent faces a preset character.
+
+    The resulting Match has match_kind='agent_vs_character' and
+    participant_agent_id set. The owning player_id is also recorded so
+    post-match pipelines can apply Elo / memory updates.
+    """
+    from app.models.player_agent import PlayerAgent
+
+    agent = session.get(PlayerAgent, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise MatchError(f"Agent {agent_id} not found or archived")
+    if agent.owner_player_id != player_id:
+        raise MatchError(f"Agent {agent_id} does not belong to player {player_id}")
+
+    player = session.get(Player, player_id)
+    if player is None:
+        raise MatchError(f"Player {player_id} not found")
+
+    character = session.execute(
+        select(Character).where(Character.preset_key == character_preset_key)
+    ).scalar_one_or_none()
+    if character is None or character.deleted_at is not None:
+        raise MatchError(f"Character preset '{character_preset_key}' not found")
+
+    if player_color == "random":
+        chosen = random.choice([Color.WHITE, Color.BLACK])
+    elif player_color == "white":
+        chosen = Color.WHITE
+    elif player_color == "black":
+        chosen = Color.BLACK
+    else:
+        raise MatchError(f"Invalid player_color: {player_color}")
+
+    match = Match(
+        character_id=character.id,
+        player_id=player.id,
+        participant_agent_id=agent_id,
+        player_color=chosen,
+        status=MatchStatus.IN_PROGRESS,
+        initial_fen=START_FEN,
+        current_fen=START_FEN,
+        move_count=0,
+        character_elo_at_start=character.current_elo,
+        player_elo_at_start=player.elo,
+        match_kind="agent_vs_character",
+    )
+    session.add(match)
+    session.flush()
+
+    _load_or_init_mood(session, match)
+    return match
+
+
 # --- Turn loop ----------------------------------------------------------
 
 

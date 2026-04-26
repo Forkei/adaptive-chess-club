@@ -116,17 +116,16 @@ class SoulResponse(BaseModel):
         description="IDs (from the surfaced memories shown in the prompt) that shaped "
         "this response. Empty if no memory was relevant.",
     )
-    game_action: Literal["none", "propose_game", "start_game"] = Field(
+    game_action: Literal["none", "propose_game", "start_game", "start_match_vs_kenji"] = Field(
         default="none",
         description=(
-            "The character's gameplay intent for this pre-match turn. "
-            "Ignored in a running match — set 'none' there. "
-            "'none' = keep chatting. Default for almost every turn. "
-            "'propose_game' = you just suggested playing; the client waits for the player to agree. "
-            "'start_game' = the player has EXPLICITLY asked to play right now "
-            "('let's play', 'I'm ready', 'start the game', etc.). "
-            "Do NOT use start_game for questions, small talk, greetings, or vague interest. "
-            "The match is created instantly on start_game — there is no undo."
+            "Gameplay intent. In a running match always 'none'.\n"
+            "Character pre-match room: 'none' (keep chatting), 'propose_game' (you suggested), "
+            "'start_game' (player EXPLICITLY asked to play NOW — 'let's play', 'I'm ready', etc.).\n"
+            "Agent pre-match room: 'none' (keep chatting), "
+            "'start_match_vs_kenji' (owner EXPLICITLY ordered a match vs Kenji NOW — "
+            "'go play Kenji', 'challenge Kenji', 'start the match', etc.).\n"
+            "Do NOT use start_game / start_match_vs_kenji for questions, small talk, or vague interest."
         ),
     )
     internal_thinking: str | None = Field(

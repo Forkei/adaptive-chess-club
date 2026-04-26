@@ -16,19 +16,26 @@ logger = logging.getLogger(__name__)
 def bulk_create(
     session: Session,
     *,
-    character_id: str,
+    character_id: str | None = None,
+    agent_id: str | None = None,
     items: Iterable[MemoryCreate],
     embed: bool = True,
 ) -> list[Memory]:
     """Create memories and (by default) embed them in a single pass.
 
+    Pass either `character_id` (character-scoped) or `agent_id` (agent-scoped,
+    Block 13). Exactly one must be provided.
+
     Embedding is best-effort: on failure we log and continue, leaving the
     `embedding` column NULL for those rows so the backfill script can
     pick them up later.
     """
+    if character_id is None and agent_id is None:
+        raise ValueError("bulk_create requires either character_id or agent_id")
     rows = [
         Memory(
             character_id=character_id,
+            agent_id=agent_id,
             player_id=item.player_id,
             match_id=item.match_id,
             scope=item.scope,
