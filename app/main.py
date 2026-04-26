@@ -130,7 +130,20 @@ fastapi_app = create_app()
 
 @fastapi_app.get("/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    from sqlalchemy import text
+    from app.db import engine
+    from app.config import get_settings
+    settings = get_settings()
+    try:
+        with engine.connect() as conn:
+            user_count = conn.execute(text("SELECT COUNT(*) FROM players")).scalar()
+    except Exception as exc:
+        user_count = f"error: {exc}"
+    return {
+        "status": "ok",
+        "database_url": settings.database_url,
+        "users": user_count,
+    }
 
 
 # The combined ASGI app — uvicorn entry point. HTTP flows through FastAPI;

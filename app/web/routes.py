@@ -303,13 +303,20 @@ def _safe_next(raw: str) -> str:
     return "/"
 
 
-def _set_login_cookie(response: RedirectResponse, player_id: str) -> None:
+def _is_https(request: Request) -> bool:
+    # Respect the X-Forwarded-Proto header set by reverse proxies (HF Spaces, nginx).
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return proto == "https"
+
+
+def _set_login_cookie(response: RedirectResponse, player_id: str, *, https: bool = False) -> None:
     response.set_cookie(
         key=PLAYER_COOKIE,
         value=player_id,
         max_age=COOKIE_MAX_AGE,
         httponly=True,
         samesite="lax",
+        secure=https,
     )
 
 
@@ -395,7 +402,7 @@ def login_submit(
     flash_key = "needs_password" if not existing.password_hash else "welcome_back"
     target = f"{safe_next}{separator}flash={flash_key}&u={existing.username}"
     redir = RedirectResponse(url=target, status_code=303)
-    _set_login_cookie(redir, existing.id)
+    _set_login_cookie(redir, existing.id, https=_is_https(request))
     return redir
 
 
@@ -514,7 +521,7 @@ def signup_submit(
     separator = "&" if "?" in safe_next else "?"
     target = f"{safe_next}{separator}flash={flash_key}&u={final_player.username}"
     redir = RedirectResponse(url=target, status_code=303)
-    _set_login_cookie(redir, final_player.id)
+    _set_login_cookie(redir, final_player.id, https=_is_https(request))
     return redir
 
 
@@ -579,6 +586,7 @@ def reset_password_form(
 
 @router.post("/reset-password/{token}")
 def reset_password_submit(
+    request: Request,
     token: str,
     password: str = Form(...),
     password_confirm: str = Form(...),
@@ -606,7 +614,7 @@ def reset_password_submit(
     session.commit()
 
     redir = RedirectResponse(url="/?flash=password_reset", status_code=303)
-    _set_login_cookie(redir, player.id)
+    _set_login_cookie(redir, player.id, https=_is_https(request))
     return redir
 
 

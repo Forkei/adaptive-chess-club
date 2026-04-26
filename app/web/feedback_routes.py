@@ -26,8 +26,7 @@ async def feedback_page(
     request: Request,
     player: Player | None = Depends(get_optional_player),
 ):
-    return templates.TemplateResponse("feedback.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "feedback.html", {
         "player": player,
         "sent": request.query_params.get("sent") == "1",
     })
@@ -86,8 +85,7 @@ async def admin_users(
         ).all()
     }
 
-    return templates.TemplateResponse("admin_users.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin_users.html", {
         "player": player,
         "players": players,
         "match_counts": match_counts,
@@ -131,8 +129,7 @@ async def admin_feedback(
             headers={"Content-Disposition": "attachment; filename=feedback.csv"},
         )
 
-    return templates.TemplateResponse("admin_feedback.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin_feedback.html", {
         "player": player,
         "entries": entries,
         "total": len(entries),
