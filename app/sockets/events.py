@@ -191,6 +191,10 @@ class PostMatchStatusPayload(_FrozenModel):
 class PostMatchCompletePayload(_FrozenModel):
     match_id: str
     summary_url: str
+    # Agent-vs-character: Elo change for the agent side (null for human matches).
+    agent_elo_delta: int | None = None
+    agent_elo_new: int | None = None
+    agent_id: str | None = None
 
 
 class PongPayload(_FrozenModel):

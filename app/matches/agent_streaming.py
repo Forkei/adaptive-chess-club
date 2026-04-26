@@ -19,6 +19,7 @@ import chess
 from sqlalchemy import select
 
 from app.agents.soul import SoulInput, _fallback_response, run_agent_soul_for_room, run_agent_soul_in_match, run_agent_soul_in_match_move
+from app.memory.inline_save import save_inline_memory
 from app.agents.subconscious import SubconsciousInput, run_subconscious
 from app.config import get_settings
 from app.db import SessionLocal
@@ -361,6 +362,17 @@ async def _run_agent_engine_turn(
                 save_mood(_agent_mood_key(match_id), new_raw, smoothed=False)
                 save_mood(_agent_mood_key(match_id), new_smoothed, smoothed=True)
                 session.commit()
+
+    # Inline memory — fire-and-forget, same pattern as streaming.py character path.
+    if soul_resp.save_memory:
+        asyncio.create_task(
+            save_inline_memory(
+                soul_resp.save_memory,
+                agent_id=agent_id,
+                player_id=player_id_local,
+                match_id=match_id_local,
+            )
+        )
 
     if soul_resp.speak:
         await emitters.on_agent_chat(soul_resp)

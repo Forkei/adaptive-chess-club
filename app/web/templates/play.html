@@ -255,6 +255,7 @@
   const HAS_REAL_ENGINE = {{ has_real_engine | tojson }};
   const WATCH_MODE = {{ (match.match_kind == 'agent_vs_character') | tojson }};
   const AGENT_NAME = {{ ((participant_agent.name if participant_agent else '') if match.match_kind == 'agent_vs_character' else '') | tojson }};
+  const AGENT_ID = {{ (match.participant_agent_id or '') | tojson }};
 
   const game = new Chess(INITIAL_FEN);
   let gameOver = INITIAL_STATUS !== "in_progress";
@@ -711,7 +712,20 @@
 
   socket.on('post_match_complete', (payload) => {
     if (WATCH_MODE) {
-      document.getElementById('postmatch-headline').textContent = 'Match complete.';
+      let headline = 'Match complete.';
+      if (payload.agent_elo_delta !== null && payload.agent_elo_delta !== undefined) {
+        const sign = payload.agent_elo_delta >= 0 ? '+' : '';
+        headline += ` ${AGENT_NAME || 'Agent'} Elo: ${sign}${payload.agent_elo_delta} → ${payload.agent_elo_new}`;
+      }
+      document.getElementById('postmatch-headline').textContent = headline;
+      if (AGENT_ID) {
+        const panel = document.getElementById('postmatch-panel');
+        const link = document.createElement('a');
+        link.href = `/agents/${AGENT_ID}`;
+        link.className = 'block mt-2 text-xs text-[var(--mp-brass-dim)] hover:text-[var(--mp-brass-bright)] transition';
+        link.textContent = `View ${AGENT_NAME || 'agent'} detail →`;
+        panel.appendChild(link);
+      }
     } else {
       document.getElementById('postmatch-headline').textContent = 'Done. Redirecting to the summary…';
       setTimeout(() => { window.location.href = payload.summary_url; }, 1200);

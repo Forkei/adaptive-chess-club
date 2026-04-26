@@ -41,7 +41,14 @@ from app.models.match import (
 )
 from app.models.memory import Memory
 from app.post_match.analysis import analyze_match_moves, identify_critical_moments
-from app.post_match.elo_apply import apply_to_both
+from app.post_match.elo_apply import (
+    BothSidesResult,
+    apply_to_both,
+    compute_elo_delta,
+    _apply_character_ratchet_item2,
+    _games_played,
+    _recent_current_elos,
+)
 from app.post_match.evolution import apply_evolution
 from app.post_match.features import extract_features, merge_features
 from app.post_match.memory_gen import generate_match_memories, update_narrative_summary
@@ -138,6 +145,73 @@ def _mark_step(session: Session, analysis: MatchAnalysis, step: str) -> None:
         steps.append(step)
         analysis.steps_completed = steps
         session.flush()
+
+
+# --- Agent-vs-character Elo helper -----------------------------------------
+
+
+def _apply_agent_vs_character_elo(
+    session: Session,
+    *,
+    match: Match,
+    analysis_moves: list[dict[str, Any]],
+) -> tuple[Any, BothSidesResult]:
+    """Compute + apply Elo for an agent_vs_character match.
+
+    Mirrors apply_to_both but updates PlayerAgent.elo instead of Player.elo
+    so the human watcher's rating is left untouched.
+    """
+    from app.director.elo import ELO_DELTA_CAP, RatchetResult
+    from app.models.player_agent import PlayerAgent
+
+    character = session.get(Character, match.character_id)
+    if character is None:
+        raise RuntimeError(f"Character {match.character_id} missing")
+    agent = session.get(PlayerAgent, match.participant_agent_id)
+    if agent is None:
+        raise RuntimeError(f"PlayerAgent {match.participant_agent_id} missing")
+
+    char_games = _games_played(session, character_id=character.id)
+    match.player_elo_at_start = agent.elo  # correct the mis-set value from service.py
+
+    computation = compute_elo_delta(
+        match=match,
+        analysis_moves=analysis_moves,
+        character_elo=character.current_elo,
+        player_elo=agent.elo,
+        character_games_played=char_games,
+        player_games_played=0,
+    )
+
+    char_recent = _recent_current_elos(session, character.id, limit=2)
+    char_result = _apply_character_ratchet_item2(
+        current_elo=character.current_elo,
+        floor_elo=character.floor_elo,
+        max_elo=character.max_elo,
+        elo_delta_raw=computation.elo_delta_raw,
+        recent_current_elos=char_recent,
+        adaptive=character.adaptive,
+    )
+    character.current_elo = char_result.new_current_elo
+    character.floor_elo = char_result.new_floor_elo
+    match.character_elo_at_end = char_result.new_current_elo
+
+    # Agent elo: simple clamped change, no floor/ceiling beyond 400–3000.
+    raw_agent = computation.player_elo_delta_raw
+    capped = int(round(max(-ELO_DELTA_CAP, min(ELO_DELTA_CAP, raw_agent))))
+    new_agent_elo = max(400, min(3000, agent.elo + capped))
+    actual_agent_change = new_agent_elo - agent.elo
+    agent.elo = new_agent_elo
+    match.player_elo_at_end = new_agent_elo
+    session.flush()
+
+    agent_result = RatchetResult(
+        new_current_elo=new_agent_elo,
+        new_floor_elo=400,
+        current_elo_change=actual_agent_change,
+        floor_elo_raised=False,
+    )
+    return computation, BothSidesResult(character=char_result, player=agent_result)
 
 
 # --- Main pipeline ---------------------------------------------------------
@@ -255,6 +329,11 @@ def _run_pipeline(
         character_id = match.character_id
         player_id = match.player_id
         initial_fen = match.initial_fen
+        is_agent_match = (
+            match.match_kind == "agent_vs_character"
+            and match.participant_agent_id is not None
+        )
+        participant_agent_id = match.participant_agent_id
 
     # --- Step 1: engine analysis -------------------------------------------
     engine_result: dict[str, Any] = {}
@@ -319,9 +398,15 @@ def _run_pipeline(
     try:
         with session_scope() as session:
             match = session.get(Match, match_id)
-            computation, both = apply_to_both(
-                session, match=match, analysis_moves=engine_result.get("moves") or []
-            )
+            if is_agent_match:
+                computation, both = _apply_agent_vs_character_elo(
+                    session, match=match,
+                    analysis_moves=engine_result.get("moves") or [],
+                )
+            else:
+                computation, both = apply_to_both(
+                    session, match=match, analysis_moves=engine_result.get("moves") or []
+                )
             a = _get_analysis(session, match_id)
             a.elo_delta_raw = computation.elo_delta_raw
             a.elo_delta_applied = both.character.current_elo_change

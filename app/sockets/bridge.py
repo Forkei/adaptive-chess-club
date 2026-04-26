@@ -110,6 +110,19 @@ def emit_post_match_status(
     _run_threadsafe(_emit_status(match_id, payload))
 
 
-def emit_post_match_complete(match_id: str, *, summary_url: str) -> None:
-    payload = PostMatchCompletePayload(match_id=match_id, summary_url=summary_url)
+def emit_post_match_complete(
+    match_id: str,
+    *,
+    summary_url: str,
+    agent_elo_delta: int | None = None,
+    agent_elo_new: int | None = None,
+    agent_id: str | None = None,
+) -> None:
+    payload = PostMatchCompletePayload(
+        match_id=match_id,
+        summary_url=summary_url,
+        agent_elo_delta=agent_elo_delta,
+        agent_elo_new=agent_elo_new,
+        agent_id=agent_id,
+    )
     _run_threadsafe(_emit_complete(match_id, payload))
