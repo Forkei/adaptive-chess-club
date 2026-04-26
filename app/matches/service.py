@@ -225,6 +225,7 @@ def create_match(
         move_count=0,
         character_elo_at_start=character.current_elo,
         player_elo_at_start=player.elo,
+        match_kind="human_vs_character",
     )
     session.add(match)
     session.flush()

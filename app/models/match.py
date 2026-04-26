@@ -12,6 +12,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -115,6 +116,10 @@ class Player(Base):
 
 class Match(Base):
     __tablename__ = "matches"
+    __table_args__ = (
+        # Fast lookup: "show me this agent's recent matches by status"
+        Index("ix_matches_agent_status", "participant_agent_id", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
 
@@ -123,6 +128,16 @@ class Match(Base):
     )
     player_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Block 13: optional player-agent participant. NULL for human_vs_character matches.
+    # For agent_vs_character: player_id is the agent's owner (watcher), participant_agent_id is the agent.
+    participant_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("player_agents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # "human_vs_character" (default) | "agent_vs_character"
+    match_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="human_vs_character", server_default="human_vs_character"
     )
 
     status: Mapped[MatchStatus] = mapped_column(
