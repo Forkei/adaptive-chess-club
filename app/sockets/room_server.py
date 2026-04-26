@@ -755,7 +755,7 @@ async def run_agent_room_pipeline(
     from app.director.mood import MoodState
 
     board = _idle_board_summary()
-    mood = MoodState()
+    mood = MoodState(aggression=0.5, confidence=0.5, tilt=0.0, engagement=0.5)
     chat_context = recent_chat + [f"player: {player_text}"]
 
     # --- Subconscious -------------------------------------------------------
