@@ -1609,6 +1609,19 @@ def archive_agent(
         raise HTTPException(status_code=403, detail="Not your agent.")
 
     agent.archived_at = datetime.utcnow()
+
+    # Abandon any in-progress matches for this agent so they don't show as "Live".
+    from app.models.match import Match, MatchStatus, MatchResult
+    stuck = session.execute(
+        select(Match).where(
+            Match.participant_agent_id == agent_id,
+            Match.status == MatchStatus.IN_PROGRESS,
+        )
+    ).scalars().all()
+    for m in stuck:
+        m.status = MatchStatus.COMPLETED
+        m.result = MatchResult.ABANDONED
+
     session.commit()
     return RedirectResponse(url="/agents", status_code=303)
 
