@@ -150,7 +150,7 @@
       {% endif %}
       <div id="thinking-banner" class="hidden flex items-center gap-2 text-[13px] text-[var(--mp-brass-bright)]">
         <span class="mp-livedot" style="background: var(--mp-brass-bright); box-shadow: 0 0 0 0 rgba(201,166,107,0.55);"></span>
-        <span id="thinking-name">{{ character.name }}</span><span> is thinking</span><span id="thinking-eta"></span><span>…</span>
+        <span id="thinking-label">{{ character.name }} is thinking</span><span id="thinking-eta"></span><span>…</span>
       </div>
       <div id="composing-banner" class="hidden flex items-center gap-2 text-[13px] text-[var(--mp-ink-blue-alt)]">
         <span class="mp-livedot" style="background: var(--mp-ink-blue-alt); box-shadow: 0 0 0 0 rgba(141,164,195,0.55);"></span>
@@ -290,7 +290,7 @@
   function setThinking(on, etaSeconds) {
     document.getElementById('thinking-banner').classList.toggle('hidden', !on);
     const etaEl = document.getElementById('thinking-eta');
-    if (etaSeconds && on) etaEl.textContent = ` (~${etaSeconds}s)`;
+    if (etaSeconds && on) etaEl.textContent = ` (~${Number(etaSeconds).toFixed(1)}s)`;
     else etaEl.textContent = '';
   }
 
@@ -627,8 +627,8 @@
     if (WATCH_MODE) {
       // agent_thinking fires before either a player_move_applied (agent's turn) or
       // agent_move (Kenji's turn). We don't know which yet, so use a generic label.
-      const el = document.getElementById('thinking-name');
-      if (el) el.textContent = 'Engine';
+      const el = document.getElementById('thinking-label');
+      if (el) el.textContent = 'Engine is thinking';
     }
     setThinking(true, payload.eta_seconds);
   });
