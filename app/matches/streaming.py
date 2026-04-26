@@ -817,7 +817,11 @@ async def _run_engine_and_agents_inner(
             player_average_seconds=player_avg_s,
             elapsed_total_seconds=elapsed_s,
         )
-        return run_soul(character, soul_input)
+        with SessionLocal() as _s:
+            _char = _s.get(Character, character_id_local)
+            if _char is None:
+                return SoulResponse()
+            return run_soul(_char, soul_input)
 
     try:
         soul_resp = await asyncio.to_thread(_soul_call)

@@ -37,6 +37,7 @@ from app.sockets.events import (
     C2S_MAKE_MOVE,
     C2S_PING,
     C2S_PLAYER_CHAT,
+    C2S_PLAYER_TO_AGENT_CHAT,
     C2S_REQUEST_STATE,
     C2S_RESIGN,
     C2S_SPECTATOR_CHAT,
@@ -79,6 +80,7 @@ from app.sockets.events import (
     PlayerChatEchoedPayload,
     PlayerChatEvent,
     PlayerChatRateLimitedPayload,
+    PlayerToAgentChatEvent,
     PlayerMoveAppliedPayload,
     PongPayload,
     SpectatorChatBroadcastPayload,
@@ -335,6 +337,7 @@ async def _on_connect(sid, environ, auth):
             role = ROLE_SPECTATOR
 
         state_payload = _build_match_state(session, match)
+        match_kind = match.match_kind
 
     await sio.save_session(
         sid,
@@ -411,6 +414,7 @@ async def _on_connect(sid, environ, auth):
         and state_payload.status == "in_progress"
         and state_payload.move_count == 0
         and state_payload.player_color == "black"  # character is white
+        and match_kind != "agent_vs_character"  # agent loop handles its own opening
     ):
         asyncio.create_task(_fire_opening_move(match_id), name=f"opening-{match_id}")
 
@@ -727,6 +731,86 @@ async def _on_spectator_chat(sid, data):
         room=match_room(match_id),
         skip_sid=sid,
         namespace=NAMESPACE,
+    )
+
+
+# --- Event: player_to_agent_chat -------------------------------------------
+
+
+@sio.on(C2S_PLAYER_TO_AGENT_CHAT, namespace=NAMESPACE)
+async def _on_player_to_agent_chat(sid, data):
+    """Player sends a message to their own agent during an agent_vs_character match."""
+    sess = await sio.get_session(sid, namespace=NAMESPACE)
+    match_id = sess.get("match_id")
+    role = sess.get("role", ROLE_PARTICIPANT)
+    if not match_id or role != ROLE_PARTICIPANT:
+        return
+
+    try:
+        event = PlayerToAgentChatEvent.model_validate(data or {})
+    except Exception as exc:
+        await _send_error(sid, "bad_payload", f"Invalid player_to_agent_chat payload: {exc}")
+        return
+
+    # Validate it's an agent match.
+    agent_id: str | None = None
+    with SessionLocal() as session:
+        match = _resolve_match(session, match_id)
+        if match is None or match.match_kind != "agent_vs_character":
+            return
+        if match.status != MatchStatus.IN_PROGRESS:
+            return
+        agent_id = match.participant_agent_id
+
+    if not agent_id:
+        return
+
+    # Per-socket rate limit (reuses the same last_chat_ms slot as player_chat).
+    ok, retry_after = _rate_limit_ok(sess)
+    await sio.save_session(sid, sess, namespace=NAMESPACE)
+    if not ok:
+        await sio.emit(
+            S2C_PLAYER_CHAT_RATE_LIMITED,
+            PlayerChatRateLimitedPayload(retry_after_ms=retry_after).model_dump(mode="json"),
+            to=sid,
+            namespace=NAMESPACE,
+        )
+        return
+
+    # Echo to sender so the optimistic bubble is confirmed.
+    received_at = datetime.utcnow()
+    await sio.emit(
+        S2C_PLAYER_CHAT_ECHOED,
+        PlayerChatEchoedPayload(text=event.text, received_at=received_at).model_dump(mode="json"),
+        to=sid,
+        namespace=NAMESPACE,
+    )
+
+    async def _emit_agent_reply(soul_response) -> None:
+        if not soul_response.speak:
+            return
+        await sio.emit(
+            S2C_AGENT_CHAT,
+            AgentChatPayload(
+                speak=soul_response.speak,
+                emotion=soul_response.emotion,
+                emotion_intensity=soul_response.emotion_intensity,
+                referenced_memory_ids=list(soul_response.referenced_memory_ids or []),
+                is_agent_side=True,
+            ).model_dump(mode="json"),
+            room=match_room(match_id),
+            namespace=NAMESPACE,
+        )
+
+    from app.matches.agent_streaming import run_agent_in_match_soul
+
+    asyncio.create_task(
+        run_agent_in_match_soul(
+            match_id=match_id,
+            agent_id=agent_id,
+            player_text=event.text,
+            emit_chat=_emit_agent_reply,
+        )
     )
 
 

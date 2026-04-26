@@ -18,7 +18,7 @@ import types
 import chess
 from sqlalchemy import select
 
-from app.agents.soul import SoulInput, _fallback_response, run_agent_soul_for_room
+from app.agents.soul import SoulInput, _fallback_response, run_agent_soul_for_room, run_agent_soul_in_match
 from app.agents.subconscious import SubconsciousInput, run_subconscious
 from app.config import get_settings
 from app.db import SessionLocal
@@ -62,7 +62,7 @@ def _load_or_init_agent_mood(agent_elo: int, match_id: str) -> tuple[MoodState, 
     smoothed = load_mood(key, smoothed=True)
     raw = load_mood(key, smoothed=False)
     if smoothed is None or raw is None:
-        initial = MoodState()  # neutral baseline for agents
+        initial = MoodState(aggression=0.5, confidence=0.5, tilt=0.0, engagement=0.5)
         save_mood(key, initial, smoothed=True)
         save_mood(key, initial, smoothed=False)
         return initial, initial
@@ -143,6 +143,7 @@ async def _run_agent_engine_turn(
 
         match_id_local = match.id
         player_id_local = match.player_id
+        player_color_str = match.player_color.value
         mood_snapshot = smoothed.to_dict()
 
     # Emit thinking.
@@ -184,7 +185,16 @@ async def _run_agent_engine_turn(
     surfaced_task = asyncio.create_task(asyncio.to_thread(_sub_sync))
     engine_task = asyncio.create_task(asyncio.to_thread(_engine_sync))
 
-    surfaced, engine_result = await asyncio.gather(surfaced_task, engine_task)
+    try:
+        surfaced, engine_result = await asyncio.wait_for(
+            asyncio.gather(surfaced_task, engine_task),
+            timeout=45.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("[agent_loop] engine+sub gather timed out for match=%s", match_id)
+        surfaced_task.cancel()
+        engine_task.cancel()
+        return False
 
     if engine_result is None:
         logger.warning("[agent_loop] engine returned None for match=%s", match_id)
@@ -262,7 +272,7 @@ async def _run_agent_engine_turn(
                 player_just_spoke=False,
                 last_player_chat=None,
                 match_id=match_id_local,
-                character_color="white" if match.player_color == Color.WHITE else "black",
+                character_color=player_color_str,
             )
             return run_agent_soul_for_room(system, soul_inp)
 
@@ -325,6 +335,12 @@ async def run_agent_match_loop(match_id: str, agent_id: str) -> None:
             board = _svc.board_with_history(match, session)
             agent_chess_color = chess.WHITE if match.player_color == Color.WHITE else chess.BLACK
 
+        side = "agent" if board.turn == agent_chess_color else "kenji"
+        logger.info(
+            "[agent_loop] turn=%d match=%s side=%s move_number=%d",
+            turn_num, match_id, side, board.fullmove_number,
+        )
+
         if board.turn == agent_chess_color:
             # Agent's turn.
             try:
@@ -357,3 +373,68 @@ async def run_agent_match_loop(match_id: str, agent_id: str) -> None:
         logger.warning("[agent_loop] hit MAX_TURNS (%d) for match=%s", MAX_TURNS, match_id)
 
     logger.info("[agent_loop] finished for match=%s after %d turns", match_id, turn_num + 1)
+
+
+# --- Player→agent in-match chat ----------------------------------------------
+
+
+async def run_agent_in_match_soul(
+    *,
+    match_id: str,
+    agent_id: str,
+    player_text: str,
+    emit_chat,
+) -> None:
+    """Background task: agent responds to a player message sent during the match."""
+    from app.models.player_agent import PlayerAgent
+    from app.agents.prompts import build_agent_system_prompt
+
+    with SessionLocal() as session:
+        match = session.get(Match, match_id)
+        if match is None or match.status != MatchStatus.IN_PROGRESS:
+            return
+        agent = session.get(PlayerAgent, agent_id)
+        if agent is None:
+            return
+
+        board = _svc.board_with_history(match, session)
+        board_summary = board_to_english(board, eval_cp=None)
+        _, smoothed = _load_or_init_agent_mood(agent.elo, match_id)
+        recent_chat = list(_load_last_chat_lines(session, match_id))
+        player_color_str = match.player_color.value
+        move_number = board.fullmove_number
+        system_prompt = build_agent_system_prompt(agent)
+
+    recent_chat.append(f"Player: {player_text}")
+
+    soul_inp = SoulInput(
+        board=board_summary,
+        mood=smoothed,
+        surfaced_memories=[],
+        recent_chat=recent_chat,
+        engine_move_san="",
+        engine_move_uci="",
+        engine_eval_cp=None,
+        engine_considered=[],
+        engine_time_ms=None,
+        move_number=move_number,
+        game_phase="opening" if move_number < 10 else "middlegame",
+        player_just_spoke=True,
+        last_player_chat=player_text,
+        match_id=match_id,
+        character_color=player_color_str,
+    )
+
+    def _soul_sync() -> SoulResponse:
+        return run_agent_soul_in_match(system_prompt, soul_inp)
+
+    try:
+        soul_resp: SoulResponse = await asyncio.wait_for(
+            asyncio.to_thread(_soul_sync), timeout=30.0
+        )
+    except Exception:
+        logger.exception("[agent_loop] in-match Soul failed for match=%s", match_id)
+        return
+
+    if soul_resp.speak:
+        await emit_chat(soul_resp)
