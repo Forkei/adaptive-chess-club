@@ -36,6 +36,9 @@ C2S_REQUEST_STATE = "request_state"  # optional — state is also emitted on con
 # Phase 3c: spectators have their own chat channel that never reaches the Subconscious.
 C2S_SPECTATOR_CHAT = "spectator_chat"
 
+# Block 14: player-to-agent chat during agent_vs_character matches.
+C2S_PLAYER_TO_AGENT_CHAT = "player_to_agent_chat"
+
 
 class MakeMoveEvent(BaseModel):
     uci: str = Field(..., min_length=4, max_length=6)
@@ -43,6 +46,10 @@ class MakeMoveEvent(BaseModel):
 
 
 class PlayerChatEvent(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500)
+
+
+class PlayerToAgentChatEvent(BaseModel):
     text: str = Field(..., min_length=1, max_length=500)
 
 
@@ -154,6 +161,7 @@ class AgentChatPayload(_FrozenModel):
     emotion: str = "neutral"
     emotion_intensity: float = 0.0
     referenced_memory_ids: list[str] = Field(default_factory=list)
+    is_agent_side: bool = False  # True → route to agent column regardless of lastMoverWasAgent
 
 
 class MoodUpdatePayload(_FrozenModel):
@@ -251,12 +259,14 @@ __all__ = [
     # client -> server
     "C2S_MAKE_MOVE",
     "C2S_PLAYER_CHAT",
+    "C2S_PLAYER_TO_AGENT_CHAT",
     "C2S_RESIGN",
     "C2S_PING",
     "C2S_REQUEST_STATE",
     "C2S_SPECTATOR_CHAT",
     "MakeMoveEvent",
     "PlayerChatEvent",
+    "PlayerToAgentChatEvent",
     "SpectatorChatEvent",
     # server -> client names
     "S2C_MATCH_STATE",

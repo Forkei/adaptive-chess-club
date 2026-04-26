@@ -158,6 +158,82 @@ def run_soul(
     return _sanitize(raw, inp.surfaced_memories)
 
 
+def run_agent_soul_in_match(
+    system_prompt: str,
+    inp: SoulInput,
+    *,
+    llm: LLMClient | None = None,
+) -> SoulResponse:
+    """Run Soul for agent responding to player chat during a live match.
+
+    Lightweight: board context + mood + recent chat + player message.
+    No engine move to comment on; the agent is responding between its own turns.
+    """
+    recent = (
+        "\n".join(f"- {line}" for line in (inp.recent_chat or [])[-8:])
+        or "(no recent chat)"
+    )
+    board_prose = inp.board.prose if hasattr(inp.board, "prose") else str(inp.board)
+    mood_line = (
+        f"aggression={inp.mood.aggression:.2f} "
+        f"confidence={inp.mood.confidence:.2f} "
+        f"tilt={inp.mood.tilt:.2f} "
+        f"engagement={inp.mood.engagement:.2f}"
+    )
+
+    user = (
+        "=== IN-MATCH COMMENTARY ===\n"
+        "Your owner just sent you a message while the match is in progress.\n\n"
+        f"=== CURRENT BOARD (move {inp.move_number}, {inp.game_phase}) ===\n"
+        f"You are playing {inp.character_color}.\n"
+        f"{board_prose}\n\n"
+        f"=== YOUR MOOD ===\n"
+        f"{mood_line}\n\n"
+        "=== RECENT CHAT (oldest → newest) ===\n"
+        f"{recent}\n\n"
+        "=== INSTRUCTIONS ===\n"
+        f'Your owner just said: "{inp.last_player_chat}"\n'
+        "Respond in character. You can comment on the game, your mood, or just chat.\n"
+        "HARD RULE: do NOT predict your next move. You may comment on moves already played.\n"
+        "Keep it 1–3 sentences max. Speak almost always when your owner messages you.\n"
+        "Produce the JSON response now."
+    )
+    prompt = f"{system_prompt}\n\n---\n\n{user}"
+
+    client = llm
+    if client is None:
+        try:
+            client = get_llm_client()
+        except LLMError as exc:
+            logger.warning("Agent Soul in-match: LLM unavailable (%s); returning silent fallback", exc)
+            return _fallback_response()
+
+    try:
+        raw = client.generate_structured(
+            prompt=prompt,
+            response_schema=SoulResponse,
+            response_adapter=_SOUL_ADAPTER,
+            temperature=0.85,
+            max_output_tokens=400,
+            call_tag=f"agent_soul_match:{inp.match_id}",
+        )
+    except LLMError as exc:
+        logger.warning("Agent Soul in-match LLM call failed (%s); returning silent fallback", exc)
+        return _fallback_response()
+    except Exception as exc:
+        logger.exception("Agent Soul in-match unexpected error (%s); returning silent fallback", exc)
+        return _fallback_response()
+
+    if not isinstance(raw, SoulResponse):
+        try:
+            raw = _SOUL_ADAPTER.validate_python(raw)
+        except Exception as exc:
+            logger.warning("Agent Soul in-match output failed validation (%s); silent fallback", exc)
+            return _fallback_response()
+
+    return _sanitize(raw, inp.surfaced_memories)
+
+
 def run_agent_soul_for_room(
     system_prompt: str,
     inp: SoulInput,
