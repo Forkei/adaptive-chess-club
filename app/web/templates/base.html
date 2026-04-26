@@ -386,7 +386,7 @@
     <div class="mp-room-backdrop-tint"></div>
   {% endif %}
 
-  <header class="border-b border-[var(--mp-hairline)] bg-[var(--mp-surface-1)]/70 backdrop-blur-sm">
+  <header class="border-b border-[var(--mp-hairline)] bg-[var(--mp-surface-1)]/70 backdrop-blur-sm relative z-[50]">
     <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
       <a href="/" class="flex items-center gap-3 group">
         {# Monogram M framed in brass — small but intentional. #}
@@ -463,6 +463,10 @@
   <script src="/static/js/ambient.js" defer></script>
   {% elif room and room.slug and room.slug != "default" %}
   <script src="/static/js/synth_ambient.js" defer></script>
+  {% else %}
+  {# Menu pages (agents, settings, profile, discovery, auth) — no room object. #}
+  <audio id="mp-ambient" src="/static/audio/ambient/ambient_menu.mp3" loop preload="auto" data-ambient-volume="0.5"></audio>
+  <script src="/static/js/ambient.js" defer></script>
   {% endif %}
   <script src="/static/js/sfx.js" defer></script>
 </body>

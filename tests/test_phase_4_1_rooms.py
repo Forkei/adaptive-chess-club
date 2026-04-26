@@ -140,7 +140,7 @@ def test_detail_page_includes_viktor_theme_vars():
 
 
 def test_detail_page_custom_character_has_no_theme_attrs():
-    """A non-preset character → DEFAULT_ROOM → no theme attrs, no ambient element."""
+    """A non-preset character → DEFAULT_ROOM → no themed attrs, no tagline lede."""
     c = _client()
     signup_and_login(c, "viewer2")
 
@@ -171,10 +171,10 @@ def test_detail_page_custom_character_has_no_theme_attrs():
     assert r.status_code == 200
     # No data-theme attribute (or it's the default).
     assert 'data-theme="default"' not in r.text
-    # Ambient audio element NOT present (default has ambient_track=None).
-    assert 'id="mp-ambient"' not in r.text
     # Default room has no tagline lede.
     assert "You enter the room" not in r.text
+    # Menu ambient audio plays on non-themed pages (base.html else branch).
+    assert 'id="mp-ambient"' in r.text
 
 
 def test_rooms_module_emotions_constant_matches_soul_schema():
