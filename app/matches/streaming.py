@@ -230,6 +230,34 @@ def _load_cross_chat_lines(
     return out[-limit:]
 
 
+def _chat_cap_hit(
+    session,
+    match_id: str,
+    side_color_str: str,
+    window: int = 5,
+    max_count: int = 2,
+) -> bool:
+    """Return True if this side has spoken on max_count or more of its last `window` turns.
+
+    Hard-caps the speaking rate regardless of what the LLM returns.  With the
+    default window=5 / max_count=2 this enforces the same 40 % ceiling that
+    _SPEAKING_RULES asks for in the system prompt — but in code, not as a
+    soft guideline.
+    """
+    from app.models.match import Color as _Color
+
+    side = _Color.WHITE if side_color_str == "white" else _Color.BLACK
+    rows = list(
+        session.execute(
+            select(Move)
+            .where(Move.match_id == match_id, Move.side == side)
+            .order_by(Move.move_number.desc())
+            .limit(window)
+        ).scalars()
+    )
+    return sum(1 for r in rows if r.agent_chat_after) >= max_count
+
+
 def _load_last_player_san(session, match_id: str) -> str | None:
     match = session.get(Match, match_id)
     if match is None:
@@ -880,6 +908,17 @@ async def _run_engine_and_agents_inner(
             "Soul failed (match=%s): %s — proceeding silently", match_id_local, exc,
         )
         soul_resp = SoulResponse()
+
+    # Hard speaking cap: silence this turn if the character spoke on 2+ of its
+    # last 5 turns.  Overrides the soft _SPEAKING_RULES guideline that the LLM
+    # routinely ignores.
+    if soul_resp.speak:
+        with SessionLocal() as _cap_s:
+            if _chat_cap_hit(_cap_s, match_id_local, character_color_str):
+                logger.debug(
+                    "chat_cap: silencing Kenji for match=%s (cap hit)", match_id_local
+                )
+                soul_resp.speak = None
 
     # Apply mood deltas + persist soul output onto the Move row.
     new_raw = apply_deltas(raw, soul_resp.mood_deltas.to_dict())
