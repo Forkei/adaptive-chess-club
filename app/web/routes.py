@@ -1345,6 +1345,225 @@ def match_watch_page(
     )
 
 
+# ------------------------------ Player Agents (Block 12) ------------------------------
+
+_AGENT_NAME_MIN = 3
+_AGENT_NAME_MAX = 60
+_PERSONALITY_MIN = 50
+_PERSONALITY_MAX = 500
+_MAX_ACTIVE_AGENTS = 3
+
+_PERSONALITY_PLACEHOLDER = (
+    "e.g. \"Aggressive tactical player who chases attacks. Trash-talks but with affection. "
+    "Loves the King's Gambit. Born in Tbilisi, learned chess from grandfather.\"\n\n"
+    "or \"Cool and methodical. Rarely says much. Plays solid positional chess — queen's pawn, "
+    "slow squeezes. Gets under your skin without saying a word.\"\n\n"
+    "or \"Total wildcard. Sacrifices material for fun, laughs when it backfires. "
+    "Grew up watching YouTube grandmaster blitz games and never really learned theory.\""
+)
+
+
+def _active_agents(session: Session, player_id: str):
+    """Return active (non-archived) PlayerAgent rows for this player."""
+    from app.models.player_agent import PlayerAgent
+
+    return (
+        session.execute(
+            select(PlayerAgent).where(
+                PlayerAgent.owner_player_id == player_id,
+                PlayerAgent.archived_at.is_(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+@router.get("/agents", response_class=HTMLResponse)
+def agents_list_page(
+    request: Request,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    agents = _active_agents(session, player.id)
+    at_limit = len(agents) >= _MAX_ACTIVE_AGENTS
+    return templates.TemplateResponse(
+        request,
+        "agents_list.html",
+        {"player": player, "agents": agents, "at_limit": at_limit, "max_agents": _MAX_ACTIVE_AGENTS},
+    )
+
+
+@router.get("/agents/new", response_class=HTMLResponse)
+def new_agent_form(
+    request: Request,
+    error: str | None = None,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    active = _active_agents(session, player.id)
+    if len(active) >= _MAX_ACTIVE_AGENTS:
+        return RedirectResponse(url="/agents?error=limit_reached", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "agent_new.html",
+        {
+            "player": player,
+            "error": error,
+            "personality_placeholder": _PERSONALITY_PLACEHOLDER,
+            "personality_min": _PERSONALITY_MIN,
+            "personality_max": _PERSONALITY_MAX,
+            "name_min": _AGENT_NAME_MIN,
+            "name_max": _AGENT_NAME_MAX,
+        },
+    )
+
+
+@router.post("/agents/new")
+def create_agent(
+    request: Request,
+    name: str = Form(...),
+    personality_description: str = Form(...),
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    from app.agents.personality_sanitizer import sanitize_personality
+    from app.models.player_agent import PlayerAgent
+
+    name = name.strip()
+    personality_description = personality_description.strip()
+
+    # Length / content validation.
+    if len(name) < _AGENT_NAME_MIN or len(name) > _AGENT_NAME_MAX:
+        return RedirectResponse(
+            url=f"/agents/new?error=name_length", status_code=303
+        )
+    if len(personality_description) < _PERSONALITY_MIN:
+        return RedirectResponse(url="/agents/new?error=personality_too_short", status_code=303)
+    if len(personality_description) > _PERSONALITY_MAX:
+        return RedirectResponse(url="/agents/new?error=personality_too_long", status_code=303)
+
+    active = _active_agents(session, player.id)
+
+    # Active agent limit.
+    if len(active) >= _MAX_ACTIVE_AGENTS:
+        return RedirectResponse(url="/agents/new?error=limit_reached", status_code=303)
+
+    # Name uniqueness per owner (active agents only).
+    name_taken = any(a.name.lower() == name.lower() for a in active)
+    if name_taken:
+        return RedirectResponse(url="/agents/new?error=name_taken", status_code=303)
+
+    # Sanitize before storing.
+    clean_personality = sanitize_personality(personality_description)
+
+    agent = PlayerAgent(
+        owner_player_id=player.id,
+        name=name,
+        personality_description=clean_personality,
+    )
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+    return RedirectResponse(url=f"/agents/{agent.id}", status_code=303)
+
+
+@router.get("/agents/{agent_id}", response_class=HTMLResponse)
+def agent_detail_page(
+    request: Request,
+    agent_id: str,
+    error: str | None = None,
+    flash: str | None = None,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    from app.models.player_agent import PlayerAgent
+
+    agent = session.get(PlayerAgent, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.owner_player_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your agent.")
+
+    return templates.TemplateResponse(
+        request,
+        "agent_detail.html",
+        {
+            "player": player,
+            "agent": agent,
+            "error": error,
+            "flash": flash,
+            "personality_placeholder": _PERSONALITY_PLACEHOLDER,
+            "personality_min": _PERSONALITY_MIN,
+            "personality_max": _PERSONALITY_MAX,
+            "name_min": _AGENT_NAME_MIN,
+            "name_max": _AGENT_NAME_MAX,
+        },
+    )
+
+
+@router.post("/agents/{agent_id}/edit")
+def edit_agent(
+    agent_id: str,
+    name: str = Form(...),
+    personality_description: str = Form(...),
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    from app.agents.personality_sanitizer import sanitize_personality
+    from app.models.player_agent import PlayerAgent
+
+    agent = session.get(PlayerAgent, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.owner_player_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your agent.")
+
+    name = name.strip()
+    personality_description = personality_description.strip()
+
+    if len(name) < _AGENT_NAME_MIN or len(name) > _AGENT_NAME_MAX:
+        return RedirectResponse(url=f"/agents/{agent_id}?error=name_length", status_code=303)
+    if len(personality_description) < _PERSONALITY_MIN:
+        return RedirectResponse(
+            url=f"/agents/{agent_id}?error=personality_too_short", status_code=303
+        )
+    if len(personality_description) > _PERSONALITY_MAX:
+        return RedirectResponse(
+            url=f"/agents/{agent_id}?error=personality_too_long", status_code=303
+        )
+
+    # Name uniqueness check — exclude the agent being edited.
+    active = _active_agents(session, player.id)
+    name_taken = any(a.name.lower() == name.lower() and a.id != agent_id for a in active)
+    if name_taken:
+        return RedirectResponse(url=f"/agents/{agent_id}?error=name_taken", status_code=303)
+
+    agent.name = name
+    agent.personality_description = sanitize_personality(personality_description)
+    session.commit()
+    return RedirectResponse(url=f"/agents/{agent_id}?flash=saved", status_code=303)
+
+
+@router.post("/agents/{agent_id}/archive")
+def archive_agent(
+    agent_id: str,
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    from app.models.player_agent import PlayerAgent
+
+    agent = session.get(PlayerAgent, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.owner_player_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your agent.")
+
+    agent.archived_at = datetime.utcnow()
+    session.commit()
+    return RedirectResponse(url="/agents", status_code=303)
+
+
 @router.get("/matches/{match_id}/summary", response_class=HTMLResponse)
 def match_summary_page(
     request: Request,
