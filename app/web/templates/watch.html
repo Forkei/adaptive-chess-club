@@ -138,7 +138,7 @@
     draggable: false,
     position: INITIAL_FEN,
     orientation: 'white',
-    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: (piece) => `/static/img/chesspieces/wikipedia/${piece}.png`,
   });
 
   function renderMoves(moves) {
