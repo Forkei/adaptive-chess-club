@@ -21,6 +21,7 @@
     {% elif error == 'personality_too_short' %}Personality description must be at least {{ personality_min }} characters.
     {% elif error == 'personality_too_long' %}Personality description must be {{ personality_max }} characters or fewer.
     {% elif error == 'limit_reached' %}You have reached the maximum number of active agents.
+    {% elif error == 'personality_injected' %}That description appeared to contain instructions to the system. Please describe your agent's character and playstyle without using language like "ignore previous instructions", "act as", or "system:".
     {% else %}{{ error }}{% endif %}
   </div>
   {% endif %}

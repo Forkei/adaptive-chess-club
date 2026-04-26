@@ -1433,7 +1433,7 @@ def create_agent(
     name = name.strip()
     personality_description = personality_description.strip()
 
-    # Length / content validation.
+    # Length / content validation (raw).
     if len(name) < _AGENT_NAME_MIN or len(name) > _AGENT_NAME_MAX:
         return RedirectResponse(
             url=f"/agents/new?error=name_length", status_code=303
@@ -1442,6 +1442,13 @@ def create_agent(
         return RedirectResponse(url="/agents/new?error=personality_too_short", status_code=303)
     if len(personality_description) > _PERSONALITY_MAX:
         return RedirectResponse(url="/agents/new?error=personality_too_long", status_code=303)
+
+    # Sanitize BEFORE storing, then re-validate post-sanitization length.
+    # Injection strings can pass the raw length check but fall short after
+    # lines are stripped — we must reject rather than silently save short text.
+    clean_personality = sanitize_personality(personality_description)
+    if len(clean_personality) < _PERSONALITY_MIN:
+        return RedirectResponse(url="/agents/new?error=personality_injected", status_code=303)
 
     active = _active_agents(session, player.id)
 
@@ -1453,9 +1460,6 @@ def create_agent(
     name_taken = any(a.name.lower() == name.lower() for a in active)
     if name_taken:
         return RedirectResponse(url="/agents/new?error=name_taken", status_code=303)
-
-    # Sanitize before storing.
-    clean_personality = sanitize_personality(personality_description)
 
     agent = PlayerAgent(
         owner_player_id=player.id,
@@ -1533,6 +1537,13 @@ def edit_agent(
             url=f"/agents/{agent_id}?error=personality_too_long", status_code=303
         )
 
+    # Sanitize BEFORE storing, then re-validate post-sanitization length.
+    clean_personality = sanitize_personality(personality_description)
+    if len(clean_personality) < _PERSONALITY_MIN:
+        return RedirectResponse(
+            url=f"/agents/{agent_id}?error=personality_injected", status_code=303
+        )
+
     # Name uniqueness check — exclude the agent being edited.
     active = _active_agents(session, player.id)
     name_taken = any(a.name.lower() == name.lower() and a.id != agent_id for a in active)
@@ -1540,7 +1551,7 @@ def edit_agent(
         return RedirectResponse(url=f"/agents/{agent_id}?error=name_taken", status_code=303)
 
     agent.name = name
-    agent.personality_description = sanitize_personality(personality_description)
+    agent.personality_description = clean_personality
     session.commit()
     return RedirectResponse(url=f"/agents/{agent_id}?flash=saved", status_code=303)
 
