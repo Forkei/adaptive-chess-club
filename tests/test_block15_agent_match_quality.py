@@ -293,12 +293,16 @@ def test_agent_system_prompt_counts_you_lines():
 
 
 # ---------------------------------------------------------------------------
-# Commit 5 — pvp.html pieceTheme function form
+# Commit 5 — pieceTheme function form across all board-rendering templates
+#
+# History: Block 15 originally only checked pvp.html, which is the PvP lobby
+# template (lobby_routes.py). Agent matches render play.html; spectators use
+# watch.html. All three must use function-form pieceTheme to avoid 404s.
 # ---------------------------------------------------------------------------
 
 
 def test_pvp_html_piece_theme_uses_function_form():
-    """pvp.html pieceTheme must use function syntax, not bare string template."""
+    """pvp.html (PvP lobby) pieceTheme must use function syntax."""
     from pathlib import Path
 
     path = Path("app/web/templates/pvp.html")
@@ -306,6 +310,28 @@ def test_pvp_html_piece_theme_uses_function_form():
 
     assert "pieceTheme: (piece) =>" in content, "pvp.html missing function-form pieceTheme"
     assert "pieceTheme: '/static" not in content, "pvp.html still uses bare string pieceTheme"
+
+
+def test_play_html_piece_theme_uses_function_form():
+    """play.html (agent + human match template) pieceTheme must use function syntax."""
+    from pathlib import Path
+
+    path = Path("app/web/templates/play.html")
+    content = path.read_text(encoding="utf-8")
+
+    assert "pieceTheme: (piece) =>" in content, "play.html missing function-form pieceTheme"
+    assert "pieceTheme: '/static" not in content, "play.html still uses bare string pieceTheme"
+
+
+def test_watch_html_piece_theme_uses_function_form():
+    """watch.html (spectator template) pieceTheme must use function syntax."""
+    from pathlib import Path
+
+    path = Path("app/web/templates/watch.html")
+    content = path.read_text(encoding="utf-8")
+
+    assert "pieceTheme: (piece) =>" in content, "watch.html missing function-form pieceTheme"
+    assert "pieceTheme: '/static" not in content, "watch.html still uses bare string pieceTheme"
 
 
 # ---------------------------------------------------------------------------
