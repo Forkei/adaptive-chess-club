@@ -165,7 +165,7 @@
     draggable: !IS_SPECTATOR && !gameOver,
     position: INITIAL_FEN,
     orientation: IS_BLACK ? 'black' : 'white',
-    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: (piece) => `/static/img/chesspieces/wikipedia/${piece}.png`,
     onDragStart: (source, piece) => {
       if (gameOver || IS_SPECTATOR) return false;
       if (game.turn() === 'w' && (!IS_WHITE || !piece.startsWith('w'))) return false;
