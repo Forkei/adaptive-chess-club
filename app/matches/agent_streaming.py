@@ -38,6 +38,7 @@ from app.engine.board_abstraction import board_to_english
 from app.matches import service as _svc
 from app.matches.streaming import (
     TurnEmitters,
+    _chat_cap_hit,
     _extract_own_recent_moves,
     _finalize_outcome,
     _load_cross_chat_lines,
@@ -350,6 +351,15 @@ async def _run_agent_engine_turn(
     except Exception:
         logger.exception("[agent_loop] agent Soul failed for match=%s", match_id)
         soul_resp = _fallback_response()
+
+    # Hard speaking cap: agent may not speak on more than 2 of its last 5 turns.
+    if soul_resp.speak:
+        with SessionLocal() as _cap_s:
+            if _chat_cap_hit(_cap_s, match_id, player_color_str):
+                logger.debug(
+                    "chat_cap: silencing agent for match=%s (cap hit)", match_id
+                )
+                soul_resp.speak = None
 
     # Persist Soul output (chat, mood deltas) on the move row.
     if soul_resp.speak or soul_resp.mood_deltas:
