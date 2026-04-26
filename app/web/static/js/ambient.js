@@ -9,10 +9,15 @@
  * that: start muted, wait for the user to click the toggle or any other
  * button, then unmute. Mute state is persisted to localStorage under
  * `mp_ambient_muted` so it survives navigation.
+ *
+ * Playback position is saved to sessionStorage on pagehide so the track
+ * continues from where it left off when the user navigates to another
+ * page that uses the same src. Different tracks always start fresh.
  */
 (function () {
   const MUTED_KEY = "mp_ambient_muted";
   const VOL_KEY = "mp_ambient_volume";
+  const POS_KEY = "mp_ambient_pos";  // { src, time }
 
   const audio = document.getElementById("mp-ambient");
   const toggle = document.getElementById("mp-ambient-toggle");
@@ -33,9 +38,43 @@
     return Number.isFinite(v) ? v : BASE_VOL;
   }
 
+  // Restore playback position if this page is loading the same track.
+  function savedPos() {
+    try {
+      const raw = sessionStorage.getItem(POS_KEY);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      // Normalise src for comparison: strip origin so relative/absolute URLs match.
+      const norm = (u) => u.replace(/^https?:\/\/[^/]+/, "");
+      if (norm(obj.src) === norm(audio.src)) return obj.time;
+    } catch (_) {}
+    return null;
+  }
+
+  // Save current position keyed to the track src before navigation.
+  function savePos() {
+    if (!audio.src || audio.duration === 0 || !isFinite(audio.currentTime)) return;
+    try {
+      sessionStorage.setItem(POS_KEY, JSON.stringify({ src: audio.src, time: audio.currentTime }));
+    } catch (_) {}
+  }
+  window.addEventListener("pagehide", savePos);
+  // visibilitychange covers tab-switch on mobile browsers that skip pagehide.
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") savePos(); });
+
   let muted = savedMuted();
   audio.volume = savedVolume();
   audio.muted = muted;
+
+  // Seek to the saved position once the audio is ready to accept currentTime writes.
+  const pos = savedPos();
+  if (pos !== null && pos > 0) {
+    audio.addEventListener("loadedmetadata", () => {
+      if (pos < audio.duration) audio.currentTime = pos;
+    }, { once: true });
+    // If metadata is already loaded (from cache), set immediately.
+    if (audio.readyState >= 1 && pos < audio.duration) audio.currentTime = pos;
+  }
 
   function render() {
     if (!toggle) return;

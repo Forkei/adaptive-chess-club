@@ -1629,8 +1629,9 @@ def agent_room_page(
         raise HTTPException(status_code=403, detail="Not your agent.")
 
     return templates.TemplateResponse(
+        request,
         "agent_room.html",
-        {"request": request, "agent": agent, "player": player},
+        {"agent": agent, "player": player},
     )
 
 
