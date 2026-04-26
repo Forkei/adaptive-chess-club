@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import types
 
 import chess
@@ -49,7 +50,7 @@ from app.schemas.agents import SoulResponse
 
 logger = logging.getLogger(__name__)
 
-INTER_TURN_DELAY_S = 1.2  # pause between automated turns for UI readability
+THINKING_DELAY_SECONDS = float(os.environ.get("THINKING_DELAY_SECONDS", "5.0"))
 MAX_TURNS = 300            # safety cap — no game is longer than 150 moves per side
 
 
@@ -403,8 +404,6 @@ async def run_agent_match_loop(match_id: str, agent_id: str) -> None:
             return
 
     for turn_num in range(MAX_TURNS):
-        await asyncio.sleep(INTER_TURN_DELAY_S)
-
         with SessionLocal() as session:
             match = session.get(Match, match_id)
             if match is None or match.status != MatchStatus.IN_PROGRESS:
@@ -446,6 +445,12 @@ async def run_agent_match_loop(match_id: str, agent_id: str) -> None:
 
         if ended:
             break
+
+        # Inter-turn pause — show the thinking indicator for the configured delay,
+        # then let the next turn begin. This makes the match watchable and gives
+        # the browser time to join the Socket.IO room before post-match events fire.
+        await emitters.on_thinking(THINKING_DELAY_SECONDS)
+        await asyncio.sleep(THINKING_DELAY_SECONDS)
     else:
         logger.warning("[agent_loop] hit MAX_TURNS (%d) for match=%s", MAX_TURNS, match_id)
 
