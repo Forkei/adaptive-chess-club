@@ -93,7 +93,7 @@
       {% if recent_matches %}
       <div class="space-y-2">
         {% for m in recent_matches %}
-        <a href="/play/{{ m.id }}"
+        <a href="/matches/{{ m.id }}"
            class="flex items-center gap-3 rounded-sm px-3 py-2 bg-[var(--mp-surface-2)] hover:bg-[var(--mp-surface-3)] transition text-[12px] no-underline">
           <span class="text-[18px] leading-none">{{ m.character_emoji }}</span>
           <div class="flex-1 min-w-0">
