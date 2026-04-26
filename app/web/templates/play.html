@@ -171,7 +171,7 @@
       <div class="grid grid-cols-2 gap-3">
         <div>
           <h2 class="mp-eyebrow mb-2">{{ character.name }}</h2>
-          <div id="chat-log" class="mp-panel rounded-sm text-sm p-4 h-[220px] overflow-y-auto space-y-2">
+          <div id="chat-log" class="mp-panel rounded-sm text-sm p-4 h-[200px] overflow-y-auto space-y-2">
             <div class="chat-placeholder text-[12px] text-[var(--mp-ink-faint)] italic">
               {{ character.name }}'s table talk will appear here.
             </div>
@@ -179,16 +179,19 @@
         </div>
         <div>
           <h2 class="mp-eyebrow mb-2">{{ participant_agent.name if participant_agent else 'Agent' }}</h2>
-          <div id="chat-log-agent" class="mp-panel rounded-sm text-sm p-4 h-[220px] overflow-y-auto space-y-2">
+          <div id="chat-log-agent" class="mp-panel rounded-sm text-sm p-4 h-[200px] overflow-y-auto space-y-2">
             <div class="chat-placeholder text-[12px] text-[var(--mp-ink-faint)] italic">
               {{ participant_agent.name if participant_agent else 'Agent' }}'s table talk will appear here.
             </div>
           </div>
+          <div class="mt-2">
+            <input id="chat-input" type="text" maxlength="500"
+                   placeholder="Talk to {{ participant_agent.name if participant_agent else 'Agent' }}… (Enter)"
+                   class="mp-input w-full text-sm" />
+          </div>
         </div>
       </div>
     </div>
-    {# Hidden inputs kept for JS event wiring; display:none prevents interaction #}
-    <input id="chat-input" type="text" class="hidden" maxlength="500" />
     {% else %}
     <div>
       <h2 class="mp-eyebrow mb-2">Table talk</h2>
@@ -328,10 +331,10 @@
   }
 
   const board = Chessboard('board', {
-    draggable: true,
+    draggable: !WATCH_MODE,
     position: INITIAL_FEN,
     orientation: PLAYER_COLOR,
-    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: (piece) => `/static/img/chesspieces/wikipedia/${piece}.png`,
     onDragStart: (source, piece) => {
       if (gameOver || movesBlocked || awaitingAgent) return false;
       if ((game.turn() === 'w' && PLAYER_COLOR !== 'white') ||
@@ -664,7 +667,9 @@
     setComposing(false);
     if (payload.speak) {
       if (WATCH_MODE) {
-        if (lastMoverWasAgent) {
+        // is_agent_side=true → reply to player message → always agent column.
+        const toAgent = payload.is_agent_side || lastMoverWasAgent;
+        if (toAgent) {
           addWatchBubble('chat-log-agent', AGENT_NAME, payload.speak);
         } else {
           addWatchBubble('chat-log', CHARACTER_NAME, payload.speak);
@@ -764,6 +769,23 @@
     socket.emit('player_chat', { text });
   }
 
+  function sendWatchChat(text) {
+    if (!text || gameOver) return;
+    // Optimistic: show player's message right-aligned in agent column.
+    const log = document.getElementById('chat-log-agent');
+    if (log) {
+      const ph = log.querySelector('.chat-placeholder');
+      if (ph) ph.remove();
+      const div = document.createElement('div');
+      div.className = 'chat-bubble-player rounded py-2 px-3 text-right';
+      div.innerHTML = `<span class="text-xs uppercase tracking-wider text-neutral-500">You</span>
+                       <div class="text-sm mt-0.5">${escapeHtml(text)}</div>`;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+    }
+    socket.emit('player_to_agent_chat', { text });
+  }
+
   const chatInput = document.getElementById('chat-input');
   chatInput.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') {
@@ -771,7 +793,8 @@
       const text = (chatInput.value || '').trim();
       if (!text) return;
       chatInput.value = '';
-      sendChat(text);
+      if (WATCH_MODE) sendWatchChat(text);
+      else sendChat(text);
     }
   });
 
