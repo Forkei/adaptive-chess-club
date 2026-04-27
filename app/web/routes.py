@@ -1291,6 +1291,7 @@ def match_page(
     # Post-match analysis state — lets the watch page restore the step indicators
     # after a page refresh (they would otherwise stay gray because the socket
     # events that drove them are long gone).
+    _analysis = None
     try:
         from app.models.match import MatchAnalysis
         _analysis = session.execute(
@@ -1302,6 +1303,73 @@ def match_page(
         logger.exception("match_page: failed to load analysis for match=%s", match_id)
         analysis_status = None
         analysis_steps_completed = []
+
+    # Inline summary data — loaded only when the pipeline is complete so the
+    # summary section can be server-rendered without an extra page navigation.
+    summary_ctx: dict = {}
+    if analysis_status == "completed" and _analysis is not None:
+        try:
+            from app.matches.service import player_outcome as _player_outcome
+            from app.models.match import OpponentProfile
+            from app.models.memory import Memory
+            from app.post_match.elo_apply import compute_elo_delta
+
+            _gen_mems: list = []
+            if _analysis.generated_memory_ids:
+                _gen_mems = list(
+                    session.execute(
+                        select(Memory).where(Memory.id.in_(list(_analysis.generated_memory_ids)))
+                    ).scalars()
+                )
+            _profile = session.execute(
+                select(OpponentProfile).where(
+                    OpponentProfile.character_id == match.character_id,
+                    OpponentProfile.player_id == match.player_id,
+                )
+            ).scalar_one_or_none()
+
+            _elo_breakdown = None
+            if _analysis.elo_delta_raw is not None:
+                _moves_list = (_analysis.engine_analysis or {}).get("moves") or []
+                _comp = compute_elo_delta(
+                    match=match,
+                    analysis_moves=_moves_list,
+                    character_elo=match.character_elo_at_start,
+                    player_elo=match.player_elo_at_start or player.elo,
+                )
+                _elo_breakdown = {
+                    "outcome": round(_comp.outcome_delta, 1),
+                    "move_quality": round(_comp.move_quality_delta, 1),
+                    "raw": round(_comp.elo_delta_raw, 1),
+                    "short_halved": _comp.short_match_halved,
+                    "rage_quit": _comp.rage_quit_skipped_quality,
+                    "expected": round(_comp.expected_score, 3),
+                    "actual": round(_comp.actual_score, 2),
+                    "k": _comp.k_factor,
+                    "player_raw": round(_comp.player_elo_delta_raw, 1),
+                    "player_expected": round(_comp.player_expected_score, 3),
+                    "player_actual": round(_comp.player_actual_score, 2),
+                    "player_k": _comp.player_k_factor,
+                }
+
+            summary_ctx = {
+                "player_outcome": _player_outcome(match),
+                "char_color": "black" if match.player_color.value == "white" else "white",
+                "elo_before": match.character_elo_at_start,
+                "elo_after": match.character_elo_at_end or match.character_elo_at_start,
+                "elo_delta_applied": _analysis.elo_delta_applied,
+                "floor_raised": bool(_analysis.floor_raised),
+                "player_elo_before": match.player_elo_at_start,
+                "player_elo_after": match.player_elo_at_end or match.player_elo_at_start,
+                "player_elo_delta_applied": _analysis.player_elo_delta_applied,
+                "player_floor_raised": bool(_analysis.player_floor_raised),
+                "elo_breakdown": _elo_breakdown,
+                "critical_moments": list(_analysis.critical_moments or []),
+                "generated_memories": _gen_mems,
+                "narrative_summary": _profile.narrative_summary if _profile else None,
+            }
+        except Exception:
+            logger.exception("match_page: failed to load summary data for match=%s", match_id)
 
     return templates.TemplateResponse(
         request,
@@ -1318,6 +1386,7 @@ def match_page(
             "participant_agent": participant_agent,
             "analysis_status": analysis_status,
             "analysis_steps_completed": analysis_steps_completed,
+            **summary_ctx,
         },
     )
 
@@ -1671,6 +1740,7 @@ def match_summary_page(
     match_id: str,
     player: Player = Depends(require_player),
     session: Session = Depends(get_session),
+    fragment: bool = False,
 ) -> HTMLResponse:
     from app.matches.service import player_outcome
     from app.models.match import MatchAnalysis, OpponentProfile
@@ -1725,27 +1795,26 @@ def match_summary_page(
             "player_k": comp.player_k_factor,
         }
 
-    return templates.TemplateResponse(
-        request,
-        "summary.html",
-        {
-            "player": player,
-            "match": match,
-            "character": character,
-            "player_outcome": player_outcome(match),
-            "char_color": "black" if match.player_color.value == "white" else "white",
-            "elo_before": match.character_elo_at_start,
-            "elo_after": match.character_elo_at_end or match.character_elo_at_start,
-            "elo_delta_applied": analysis.elo_delta_applied if analysis else None,
-            "floor_raised": bool(analysis.floor_raised) if analysis else False,
-            "player_elo_before": match.player_elo_at_start,
-            "player_elo_after": match.player_elo_at_end or match.player_elo_at_start,
-            "player_elo_delta_applied": analysis.player_elo_delta_applied if analysis else None,
-            "player_floor_raised": bool(analysis.player_floor_raised) if analysis else False,
-            "elo_breakdown": elo_breakdown,
-            "critical_moments": list(analysis.critical_moments or []) if analysis else [],
-            "generated_memories": generated_memories,
-            "narrative_summary": profile.narrative_summary if profile else None,
-            "analysis_status": analysis.status.value if analysis else "none",
-        },
-    )
+    ctx = {
+        "player": player,
+        "match": match,
+        "character": character,
+        "room": theme_for_character(character),
+        "player_outcome": player_outcome(match),
+        "char_color": "black" if match.player_color.value == "white" else "white",
+        "elo_before": match.character_elo_at_start,
+        "elo_after": match.character_elo_at_end or match.character_elo_at_start,
+        "elo_delta_applied": analysis.elo_delta_applied if analysis else None,
+        "floor_raised": bool(analysis.floor_raised) if analysis else False,
+        "player_elo_before": match.player_elo_at_start,
+        "player_elo_after": match.player_elo_at_end or match.player_elo_at_start,
+        "player_elo_delta_applied": analysis.player_elo_delta_applied if analysis else None,
+        "player_floor_raised": bool(analysis.player_floor_raised) if analysis else False,
+        "elo_breakdown": elo_breakdown,
+        "critical_moments": list(analysis.critical_moments or []) if analysis else [],
+        "generated_memories": generated_memories,
+        "narrative_summary": profile.narrative_summary if profile else None,
+        "analysis_status": analysis.status.value if analysis else "none",
+    }
+    template = "_summary_body.html" if fragment else "summary.html"
+    return templates.TemplateResponse(request, template, ctx)
