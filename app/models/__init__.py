@@ -1,5 +1,7 @@
 from app.models.auth import PasswordResetToken
 from app.models.base import Base
+from app.models.clay_balance import ClayBalance
+from app.models.clay_transaction import ClayTransaction
 from app.models.player_agent import PlayerAgent
 from app.models.chat import (
     CharacterChatSession,
@@ -31,6 +33,8 @@ from app.models.match import (
 from app.models.memory import Memory, MemoryScope, MemoryType
 
 __all__ = [
+    "ClayBalance",
+    "ClayTransaction",
     "PlayerAgent",
     "Base",
     "CharacterChatSession",

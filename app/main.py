@@ -54,6 +54,11 @@ async def lifespan(app: FastAPI):
     configure_logging()
     init_db()
 
+    # Block 17: initialize the $CLAY ledger singleton so any misconfiguration
+    # surfaces at startup rather than on first wager.
+    from app.economy.clay_ledger import get_ledger as _get_ledger
+    _get_ledger()
+
     # Capture the main event loop so the post-match processor's daemon thread
     # can schedule Socket.IO emits back onto us via run_coroutine_threadsafe.
     set_main_loop(asyncio.get_running_loop())

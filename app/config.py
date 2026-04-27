@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     # Defaults to the project owner; set to "" to disable the admin view.
     admin_username: str = "forkei"
 
+    # Block 17: $CLAY simulated economy.
+    # Starting grant in cents (default 10000 = 100 $CLAY).
+    starting_clay_grant: int = 10000
+    # Max stake per single agent-vs-character match (cents). 10000 = 100 $CLAY.
+    max_stake_cents: int = 10000
+
     @property
     def log_path(self) -> Path:
         p = Path(self.log_dir)

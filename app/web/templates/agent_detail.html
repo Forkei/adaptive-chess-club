@@ -87,6 +87,46 @@
       <a href="/agents/{{ agent.id }}/room" class="mp-btn mp-btn-brass w-full text-center block">Enter Briefing Room</a>
     </div>
 
+    {# Challenge Kenji — quick dispatch with optional $CLAY wager #}
+    <div class="mp-panel rounded-sm p-4 mp-framed">
+      <div class="mp-frame-tl"></div>
+      <div class="mp-frame-br"></div>
+      <div class="mp-eyebrow mb-3">Challenge Kenji</div>
+
+      {% if error == 'stake_insufficient' %}
+      <div class="mb-3 text-[11px] text-[#E79E9B] mp-mono">Not enough $CLAY for that stake.</div>
+      {% elif error == 'stake_too_large' %}
+      <div class="mb-3 text-[11px] text-[#E79E9B] mp-mono">Max stake is {{ max_stake_display }} $CLAY per match.</div>
+      {% elif error == 'stake_negative' %}
+      <div class="mb-3 text-[11px] text-[#E79E9B] mp-mono">Stake must be 0 or greater.</div>
+      {% endif %}
+
+      <form action="/agents/{{ agent.id }}/play-kenji" method="post" class="space-y-3">
+        <div>
+          <label class="block mp-eyebrow mb-1">Stake $CLAY</label>
+          <div class="flex items-center gap-2">
+            <input
+              type="number"
+              name="stake_display"
+              id="stake-input"
+              value="0"
+              min="0"
+              max="{{ [max_stake_display, player_clay_balance // 100] | min }}"
+              step="1"
+              class="mp-input w-28 text-center mp-mono"
+            />
+            <span class="text-[11px] text-[var(--mp-ink-faint)] mp-mono">
+              / {{ "%.2f"|format(player_clay_balance / 100) }} available
+            </span>
+          </div>
+          <div class="text-[10px] text-[var(--mp-ink-faint)] mt-1">0 = casual (no balance change) · max {{ max_stake_display }} $CLAY</div>
+        </div>
+        <button type="submit" class="mp-btn mp-btn-brass w-full">
+          Send {{ agent.name }} to play Kenji
+        </button>
+      </form>
+    </div>
+
     {# Recent matches #}
     <div class="mp-panel rounded-sm p-4">
       <div class="mp-eyebrow mb-3">Recent Matches</div>
@@ -106,22 +146,21 @@
           <div class="text-right shrink-0">
             {% if m.status == 'in_progress' %}
               <span class="text-[11px] text-[var(--mp-felt-bright)] mp-mono">live</span>
-            {% elif m.result == '1-0' %}
-              {% if m.player_color == 'white' %}
-                <span class="text-[11px] text-[var(--mp-felt-bright)] mp-mono">win</span>
-              {% else %}
-                <span class="text-[11px] text-[#E79E9B] mp-mono">loss</span>
+            {% elif m.agent_won == 'win' %}
+              <span class="text-[11px] text-[var(--mp-felt-bright)] mp-mono">win</span>
+              {% if m.stake_cents > 0 %}
+              <div class="text-[10px] text-[var(--mp-felt-bright)] mp-mono">+{{ "%.0f"|format(m.stake_cents / 100) }} $CLAY</div>
               {% endif %}
-            {% elif m.result == '0-1' %}
-              {% if m.player_color == 'black' %}
-                <span class="text-[11px] text-[var(--mp-felt-bright)] mp-mono">win</span>
-              {% else %}
-                <span class="text-[11px] text-[#E79E9B] mp-mono">loss</span>
+            {% elif m.agent_won == 'loss' %}
+              <span class="text-[11px] text-[#E79E9B] mp-mono">loss</span>
+              {% if m.stake_cents > 0 %}
+              <div class="text-[10px] text-[#E79E9B] mp-mono">-{{ "%.0f"|format(m.stake_cents / 100) }} $CLAY</div>
               {% endif %}
-            {% elif m.result == '1/2-1/2' %}
+            {% elif m.agent_won == 'draw' %}
               <span class="text-[11px] text-[var(--mp-brass)] mp-mono">draw</span>
-            {% elif m.status == 'abandoned' %}
-              <span class="text-[11px] text-[var(--mp-ink-faint)] mp-mono">—</span>
+              {% if m.stake_cents > 0 %}
+              <div class="text-[10px] text-[var(--mp-brass)] mp-mono">refunded</div>
+              {% endif %}
             {% else %}
               <span class="text-[11px] text-[var(--mp-ink-faint)] mp-mono">—</span>
             {% endif %}

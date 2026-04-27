@@ -54,6 +54,7 @@ from app.characters.chat_service import (
 from app.characters.openings import OPENINGS
 from app.characters.rooms import theme_for_character
 from app.characters.style import style_to_prompt_fragments
+from app.config import get_settings
 from app.db import get_session
 from app.discovery import (
     character_leaderboard,
@@ -82,7 +83,40 @@ logger = logging.getLogger(__name__)
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
+
+def _clay_balance_global(player_id: str) -> int:
+    """Jinja2 global: {{ clay_balance(player.id) }} in any template."""
+    from app.economy.clay_ledger import get_ledger
+    try:
+        return get_ledger().get_balance(player_id)
+    except Exception:
+        return 0
+
+
+templates.env.globals["clay_balance"] = _clay_balance_global
+
 router = APIRouter(tags=["web"])
+
+
+def _grant_starting_clay(player_id: str) -> None:
+    """Credit the starting $CLAY grant exactly once per player.
+
+    Idempotent: checks for an existing 'starting_grant' transaction before
+    crediting. Safe to call from signup and from the backfill script.
+    """
+    from app.config import get_settings
+    from app.economy.clay_ledger import get_ledger
+
+    ledger = get_ledger()
+    existing = ledger.transactions_for_player(player_id, limit=1, reason="starting_grant")
+    if existing:
+        return
+    amount = get_settings().starting_clay_grant
+    try:
+        ledger.credit(player_id, amount, reason="starting_grant")
+        logger.info("Granted %d cents starting $CLAY to player %s", amount, player_id)
+    except Exception:
+        logger.exception("Failed to grant starting $CLAY to player %s", player_id)
 
 
 def _room_for_match(character) -> "RoomTheme":
@@ -516,6 +550,9 @@ def signup_submit(
         session.commit()
         session.refresh(final_player)
         flash_key = "welcome"
+        # Grant starting $CLAY to new players (idempotent — skipped if already
+        # granted, which guards the guest-upgrade path from double-granting).
+        _grant_starting_clay(final_player.id)
 
     safe_next = _safe_next(next)
     separator = "&" if "?" in safe_next else "?"
@@ -1600,16 +1637,37 @@ def agent_detail_page(
     recent_matches = []
     for m in recent_matches_rows:
         char = session.get(Character, m.character_id)
+        # Determine agent outcome for display.
+        agent_won = None
+        if m.result is not None:
+            from app.models.match import MatchResult as _MR, Color as _C
+            agent_is_white = m.player_color == _C.WHITE
+            if m.result == _MR.DRAW:
+                agent_won = "draw"
+            elif m.result == _MR.ABANDONED:
+                agent_won = "abandoned"
+            elif (m.result == _MR.WHITE_WIN and agent_is_white) or (
+                m.result == _MR.BLACK_WIN and not agent_is_white
+            ):
+                agent_won = "win"
+            else:
+                agent_won = "loss"
         recent_matches.append({
             "id": m.id,
             "character_name": char.name if char else "Unknown",
             "character_emoji": char.avatar_emoji if char else "♟",
             "status": m.status.value,
             "result": m.result.value if m.result else None,
+            "agent_won": agent_won,
             "player_color": m.player_color.value,
             "created_at": m.started_at,
             "move_count": m.move_count,
+            "stake_cents": m.stake_cents,
+            "stake_settled": m.stake_settled_at is not None,
         })
+
+    from app.economy.clay_ledger import get_ledger as _get_ledger
+    player_clay_balance = _get_ledger().get_balance(player.id)
 
     return templates.TemplateResponse(
         request,
@@ -1626,6 +1684,8 @@ def agent_detail_page(
             "name_max": _AGENT_NAME_MAX,
             "recent_matches": recent_matches,
             "total_match_count": total_match_count,
+            "player_clay_balance": player_clay_balance,
+            "max_stake_display": get_settings().max_stake_cents // 100,
         },
     )
 
@@ -1731,6 +1791,135 @@ def agent_room_page(
         request,
         "agent_room.html",
         {"agent": agent, "player": player},
+    )
+
+
+@router.post("/agents/{agent_id}/play-kenji")
+async def send_agent_to_play_kenji(
+    agent_id: str,
+    request: Request,
+    stake_display: int = Form(0),
+    player: Player = Depends(require_player),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    """Direct dispatch: send agent to play Kenji with an optional $CLAY stake.
+
+    Bypasses the briefing room — creates the match, debits the stake, and
+    starts the agent loop. On validation failure, redirects back to agent detail
+    with an error query param.
+    """
+    import asyncio as _asyncio
+    from app.economy.clay_ledger import InsufficientFunds, get_ledger
+    from app.matches.service import create_agent_match
+    from app.matches.agent_streaming import run_agent_match_loop
+    from app.models.player_agent import PlayerAgent
+
+    agent = session.get(PlayerAgent, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.owner_player_id != player.id:
+        raise HTTPException(status_code=403, detail="Not your agent.")
+
+    settings = get_settings()
+    stake_cents = max(0, stake_display) * 100
+
+    if stake_cents > 0:
+        max_stake = settings.max_stake_cents
+        if stake_cents > max_stake:
+            return RedirectResponse(
+                url=f"/agents/{agent_id}?error=stake_too_large", status_code=303
+            )
+        ledger = get_ledger()
+        balance = ledger.get_balance(player.id)
+        if balance < stake_cents:
+            return RedirectResponse(
+                url=f"/agents/{agent_id}?error=stake_insufficient", status_code=303
+            )
+
+    from app.engine import EngineUnavailable
+    try:
+        match = create_agent_match(
+            session,
+            agent_id=agent_id,
+            player_id=player.id,
+            character_preset_key="kenji_sato",
+        )
+        match.stake_cents = stake_cents
+        session.commit()
+        session.refresh(match)
+    except EngineUnavailable as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        session.rollback()
+        logger.exception("send_agent_to_play_kenji: match creation failed")
+        raise HTTPException(status_code=500, detail="Could not create match") from exc
+
+    if stake_cents > 0:
+        try:
+            get_ledger().debit(
+                player.id,
+                stake_cents,
+                reason="match_stake",
+                match_id=match.id,
+            )
+        except InsufficientFunds:
+            # Race: balance changed between check and debit — refund path: no stake.
+            match.stake_cents = 0
+            session.commit()
+            logger.warning(
+                "stake debit race for player=%s match=%s — cleared stake",
+                player.id, match.id,
+            )
+
+    _asyncio.create_task(
+        run_agent_match_loop(match.id, agent_id),
+        name=f"agent-loop-{match.id}",
+    )
+    return RedirectResponse(url=f"/matches/{match.id}", status_code=303)
+
+
+@router.get("/me/clay-history", response_class=HTMLResponse)
+def clay_history_page(
+    request: Request,
+    player: Player = Depends(require_player),
+    page: int = 1,
+) -> HTMLResponse:
+    from app.economy.clay_ledger import get_ledger
+    from app.models.clay_transaction import ClayTransaction
+
+    per_page = 30
+    offset_n = (max(1, page) - 1) * per_page
+    ledger = get_ledger()
+
+    # Fetch one extra to know if there is a next page.
+    with ledger._factory() as session:
+        from sqlalchemy import select as _select
+
+        stmt = (
+            _select(ClayTransaction)
+            .where(ClayTransaction.player_id == player.id)
+            .order_by(ClayTransaction.created_at.desc())
+            .offset(offset_n)
+            .limit(per_page + 1)
+        )
+        rows = list(session.execute(stmt).scalars())
+
+    has_next = len(rows) > per_page
+    transactions = rows[:per_page]
+    balance = ledger.get_balance(player.id)
+
+    return templates.TemplateResponse(
+        request,
+        "clay_history.html",
+        {
+            "player": player,
+            "transactions": transactions,
+            "balance": balance,
+            "page": page,
+            "has_next": has_next,
+            "per_page": per_page,
+        },
     )
 
 

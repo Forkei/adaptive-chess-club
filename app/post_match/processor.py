@@ -35,6 +35,7 @@ from app.models.match import (
     Match,
     MatchAnalysis,
     MatchAnalysisStatus,
+    MatchResult,
     MatchStatus,
     Move,
     OpponentProfile,
@@ -418,6 +419,15 @@ def _run_pipeline(
     except Exception as exc:
         logger.exception("elo_ratchet failed for match=%s: %s", match_id, exc)
 
+    # --- Step 3.6: $CLAY wager settlement (one-shot guard via stake_settled_at) ---
+    try:
+        with session_scope() as session:
+            match = session.get(Match, match_id)
+            if match and match.stake_cents > 0 and match.stake_settled_at is None:
+                _settle_wager(session, match)
+    except Exception as exc:
+        logger.exception("wager_settlement failed for match=%s: %s", match_id, exc)
+
     # --- Step 3.5: Evolution (pure data, no LLM, private matches skipped) --
     _start(STEP_EVOLUTION)
     try:
@@ -516,6 +526,70 @@ def _run_pipeline(
 
 
 # --- Internal helpers ------------------------------------------------------
+
+
+def _settle_wager(session: Session, match: Match) -> None:
+    """Settle the $CLAY wager for a match. Called at most once (one-shot guard).
+
+    Determines outcome relative to the player/agent (not the character), then:
+      Win  → credit 2× stake (stake back + equal win).
+      Loss → no credit (stake already debited at match creation; log a marker txn).
+      Draw / Abandoned → refund the stake.
+
+    Sets match.stake_settled_at within the caller's session so the guard is
+    committed atomically with any credit/debit.
+    """
+    from datetime import datetime
+    from app.economy.clay_ledger import get_ledger
+
+    stake = match.stake_cents
+    player_id = match.player_id
+    match_id = match.id
+
+    # Determine outcome from first principles (player_outcome() conflates
+    # RESIGNED and ABANDONED; we want to refund abandoned matches per spec).
+    if match.status == MatchStatus.ABANDONED:
+        raw_outcome = "abandoned"
+    elif match.status in (MatchStatus.COMPLETED, MatchStatus.RESIGNED):
+        if match.result == MatchResult.DRAW:
+            raw_outcome = "draw"
+        elif match.result == MatchResult.ABANDONED:
+            raw_outcome = "abandoned"
+        else:
+            from app.models.match import Color as _Color
+            player_side = match.player_color
+            winning_side = (
+                _Color.WHITE if match.result == MatchResult.WHITE_WIN else _Color.BLACK
+            )
+            raw_outcome = "win" if player_side == winning_side else "loss"
+    else:
+        logger.warning("_settle_wager: match %s is not terminal (status=%s)", match_id, match.status)
+        return
+
+    ledger = get_ledger()
+
+    if raw_outcome == "win":
+        ledger.credit(player_id, stake * 2, reason="match_win", match_id=match_id)
+        logger.info(
+            "wager settled: win player=%s match=%s +%d cents", player_id, match_id, stake * 2
+        )
+    elif raw_outcome in ("draw", "abandoned"):
+        ledger.credit(player_id, stake, reason="match_draw_refund", match_id=match_id)
+        logger.info(
+            "wager settled: %s player=%s match=%s refund %d cents",
+            raw_outcome, player_id, match_id, stake,
+        )
+    else:
+        # Loss — stake was already debited. Record an audit marker with amount=0
+        # so transaction history shows what happened.
+        ledger.credit(player_id, 0, reason="match_loss", match_id=match_id)
+        logger.info(
+            "wager settled: loss player=%s match=%s (stake %d forfeited)",
+            player_id, match_id, stake,
+        )
+
+    match.stake_settled_at = datetime.utcnow()
+    session.flush()
 
 
 def _get_or_create_profile(session: Session, character_id: str, player_id: str) -> OpponentProfile:

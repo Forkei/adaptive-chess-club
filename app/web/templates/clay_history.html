@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}$CLAY History — Metropolis Chess Club{% endblock %}
+
+{% block content %}
+<div class="mp-enter mp-enter-1 mb-2">
+  <a href="/" class="text-[12px] text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink-muted)] transition">← Back</a>
+</div>
+
+<div class="mp-enter mp-enter-1 mb-6 flex items-end justify-between">
+  <div>
+    <div class="mp-eyebrow mb-2">$CLAY Economy</div>
+    <h1 class="mp-display text-[28px] tracking-tight">Transaction History</h1>
+  </div>
+  <div class="text-right">
+    <div class="mp-eyebrow mb-1">Current Balance</div>
+    <div class="mp-mono text-[26px]
+      {% if balance < 100 %}text-[var(--mp-ink-faint)]{% else %}text-[var(--mp-brass)]{% endif %}">
+      {{ "%.2f"|format(balance / 100) }} $CLAY
+    </div>
+    {% if balance < 100 %}
+    <div class="text-[11px] text-[var(--mp-ink-faint)] mt-1 mp-mono">
+      Balance low — top up via Metropolis (coming soon)
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="mp-panel rounded-sm overflow-hidden mp-enter mp-enter-2">
+  {% if transactions %}
+  <table class="w-full text-[13px]">
+    <thead>
+      <tr class="border-b border-[var(--mp-hairline)] bg-[var(--mp-surface-2)]">
+        <th class="text-left px-5 py-3 mp-eyebrow font-normal">Date</th>
+        <th class="text-left px-5 py-3 mp-eyebrow font-normal">Reason</th>
+        <th class="text-right px-5 py-3 mp-eyebrow font-normal">Amount</th>
+        <th class="text-right px-5 py-3 mp-eyebrow font-normal">Balance</th>
+        <th class="text-left px-5 py-3 mp-eyebrow font-normal">Match</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for txn in transactions %}
+    <tr class="border-b border-[var(--mp-hairline)] hover:bg-[var(--mp-surface-2)] transition">
+      <td class="px-5 py-3 text-[var(--mp-ink-faint)] mp-mono text-[11px] whitespace-nowrap">
+        {{ txn.created_at.strftime('%Y-%m-%d %H:%M') }}
+      </td>
+      <td class="px-5 py-3 text-[var(--mp-ink-muted)] mp-mono text-[11px]">
+        {{ txn.reason | replace("_", " ") }}
+      </td>
+      <td class="px-5 py-3 text-right mp-mono text-[13px] font-medium whitespace-nowrap
+        {% if txn.amount > 0 %}text-[var(--mp-felt-bright)]
+        {% elif txn.amount < 0 %}text-[#E79E9B]
+        {% else %}text-[var(--mp-ink-faint)]{% endif %}">
+        {% if txn.amount > 0 %}+{{ "%.2f"|format(txn.amount / 100) }}
+        {% elif txn.amount < 0 %}{{ "%.2f"|format(txn.amount / 100) }}
+        {% else %}<span class="text-[var(--mp-ink-faint)]">—</span>{% endif %}
+      </td>
+      <td class="px-5 py-3 text-right mp-mono text-[12px] text-[var(--mp-ink-muted)] whitespace-nowrap">
+        {{ "%.2f"|format(txn.balance_after / 100) }}
+      </td>
+      <td class="px-5 py-3">
+        {% if txn.related_match_id %}
+        <a href="/matches/{{ txn.related_match_id }}"
+           class="text-[11px] text-[var(--mp-ink-blue-alt)] hover:text-[var(--mp-ink-blue)] transition mp-mono">
+          view match →
+        </a>
+        {% else %}
+        <span class="text-[var(--mp-ink-ghost)] text-[11px] mp-mono">—</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {# Pagination #}
+  <div class="flex items-center justify-between px-5 py-4 border-t border-[var(--mp-hairline)]">
+    <div class="text-[11px] text-[var(--mp-ink-faint)] mp-mono">
+      Page {{ page }} · {{ transactions | length }} rows
+    </div>
+    <div class="flex gap-3">
+      {% if page > 1 %}
+      <a href="/me/clay-history?page={{ page - 1 }}" class="mp-btn mp-btn-ghost text-[12px]">← Prev</a>
+      {% endif %}
+      {% if has_next %}
+      <a href="/me/clay-history?page={{ page + 1 }}" class="mp-btn mp-btn-ghost text-[12px]">Next →</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% else %}
+  <div class="py-16 text-center">
+    <div class="mp-display italic text-[var(--mp-ink-muted)] text-[15px]">No transactions yet.</div>
+    <div class="text-[12px] text-[var(--mp-ink-faint)] mt-2">
+      Sign up grants you 100 $CLAY. Send an agent to play Kenji to start wagering.
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

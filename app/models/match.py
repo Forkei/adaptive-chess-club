@@ -179,6 +179,13 @@ class Match(Base):
 
     extra_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
+    # Block 17: $CLAY wagering. 0 = casual (no money moves). Integer cents.
+    stake_cents: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Timestamp set when wager is settled — prevents double-settlement on retry.
+    stake_settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 

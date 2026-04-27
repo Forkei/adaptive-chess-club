@@ -400,10 +400,21 @@
           <span aria-hidden="true">🔇</span>
         </button>
         {% if player %}
+        {# $CLAY balance — brass tone, links to history page. #}
+        {%- set _balance_cents = clay_balance(player.id) -%}
+        <a href="/me/clay-history"
+           class="mp-clay-display flex items-center gap-1 transition hover:opacity-90"
+           title="$CLAY balance — click for transaction history"
+           style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.04em; text-decoration: none;
+                  color: {% if _balance_cents < 100 %}var(--mp-ink-ghost){% else %}var(--mp-brass){% endif %};"
+           {% if _balance_cents < 100 %}data-tooltip="Balance low — top up via Metropolis (coming soon)"{% endif %}>
+          {{ "%.2f"|format(_balance_cents / 100) }} <span style="opacity:0.65;">$CLAY</span>
+        </a>
         <details class="mp-user-menu">
           <summary title="Account menu">@{{ player.username }}</summary>
           <div class="mp-user-menu-panel">
             <a href="/agents">My Agents</a>
+            <a href="/me/clay-history">$CLAY History</a>
             <a href="/settings">Settings</a>
             <a href="/logout">Logout</a>
           </div>

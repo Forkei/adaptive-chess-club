@@ -25,6 +25,8 @@ from app.db import SessionLocal, engine, init_db  # noqa: E402
 from app.models.auth import PasswordResetToken  # noqa: E402
 from app.models.chat import CharacterChatSession, CharacterChatTurn  # noqa: E402
 from app.models.character import Character  # noqa: E402
+from app.models.clay_balance import ClayBalance  # noqa: E402
+from app.models.clay_transaction import ClayTransaction  # noqa: E402
 from app.models.evolution import CharacterEvolutionState  # noqa: E402
 from app.models.lobby import (  # noqa: E402
     Lobby,
@@ -48,6 +50,8 @@ def _clean_tables():
     with engine.begin() as conn:
         conn.execute(delete(MatchAnalysis))
         conn.execute(delete(Move))
+        conn.execute(delete(ClayTransaction))
+        conn.execute(delete(ClayBalance))
         conn.execute(delete(Match))
         conn.execute(delete(PlayerAgent))
         conn.execute(delete(OpponentProfile))

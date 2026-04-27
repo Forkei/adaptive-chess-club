@@ -125,6 +125,15 @@
   </div>
 </div>
 
+{% if match.stake_cents > 0 %}
+<div class="mb-4 rounded-sm border border-[var(--mp-brass-dim)] bg-[rgba(201,166,107,0.06)] px-5 py-3 flex items-center gap-3 mp-enter mp-enter-2">
+  <span class="mp-eyebrow" style="color:var(--mp-brass-dim);">Wager</span>
+  <span class="mp-mono text-[var(--mp-brass)] text-[15px]">{{ "%.0f"|format(match.stake_cents / 100) }} $CLAY</span>
+  <span class="text-[11px] text-[var(--mp-ink-faint)]">·</span>
+  <span id="wager-outcome-label" class="text-[12px] text-[var(--mp-ink-muted)] mp-mono">in play</span>
+</div>
+{% endif %}
+
 <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,500px)_minmax(0,1fr)] gap-6 mp-enter mp-enter-2">
   <div>
     {% if room and room.emotion_clips %}
@@ -881,6 +890,23 @@
       tail = outcome === 'won' ? ` — ${AGENT_NAME} won` : outcome === 'lost' ? ` — ${AGENT_NAME} lost` : ` — ${outcome}`;
     }
     resultEl.textContent = `${result || 'unknown'}${tail}${reason ? ` · ${reason}` : ''}`;
+
+    // Update wager outcome label if there is a stake.
+    const wagerLabel = document.getElementById('wager-outcome-label');
+    const STAKE_CENTS = {{ match.stake_cents | default(0) }};
+    if (wagerLabel && STAKE_CENTS > 0) {
+      const stakeDisplay = (STAKE_CENTS / 100).toFixed(0);
+      if (outcome === 'won') {
+        wagerLabel.textContent = `+${stakeDisplay} $CLAY`;
+        wagerLabel.style.color = 'var(--mp-felt-bright)';
+      } else if (outcome === 'lost') {
+        wagerLabel.textContent = `-${stakeDisplay} $CLAY`;
+        wagerLabel.style.color = '#E79E9B';
+      } else {
+        wagerLabel.textContent = 'stake refunded';
+        wagerLabel.style.color = 'var(--mp-brass)';
+      }
+    }
   }
 
 

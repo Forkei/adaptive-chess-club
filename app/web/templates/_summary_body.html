@@ -75,6 +75,23 @@
     </div>
   </div>
 
+  {# $CLAY wager outcome — only shown when there was a stake #}
+  {% if match.stake_cents > 0 %}
+  <div class="mt-5 pt-4 border-t border-[var(--mp-hairline)] flex items-center gap-4">
+    <div class="mp-eyebrow" style="color:var(--mp-brass-dim);">$CLAY Wager</div>
+    {% if player_outcome == 'win' %}
+      <span class="mp-mono text-[var(--mp-felt-bright)] text-[16px]">+{{ "%.0f"|format(match.stake_cents / 100) }} $CLAY</span>
+      <span class="text-[11px] text-[var(--mp-ink-faint)]">won the stake</span>
+    {% elif player_outcome == 'loss' %}
+      <span class="mp-mono text-[#E79E9B] text-[16px]">−{{ "%.0f"|format(match.stake_cents / 100) }} $CLAY</span>
+      <span class="text-[11px] text-[var(--mp-ink-faint)]">stake lost</span>
+    {% else %}
+      <span class="mp-mono text-[var(--mp-brass)] text-[16px]">{{ "%.0f"|format(match.stake_cents / 100) }} $CLAY</span>
+      <span class="text-[11px] text-[var(--mp-ink-faint)]">stake refunded (draw / abandoned)</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if elo_breakdown %}
     <div class="mt-6 pt-5 border-t border-[var(--mp-hairline)]">
       <div class="mp-eyebrow mb-3">How the delta was computed</div>
