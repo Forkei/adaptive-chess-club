@@ -231,6 +231,16 @@
   <ul id="postmatch-steps" class="text-[12px] text-[var(--mp-ink-muted)] space-y-1 mp-mono"></ul>
 </div>
 
+<div id="summary-inline" class="hidden mt-6 border-t border-[var(--mp-hairline)] pt-8 max-w-3xl">
+  {% if analysis_status == 'completed' %}
+    {% include '_summary_body.html' %}
+  {% else %}
+  <div id="summary-loading" class="py-8 text-center text-[var(--mp-ink-muted)] mp-display italic text-[15px]">
+    Loading match summary…
+  </div>
+  {% endif %}
+</div>
+
 <div id="disconnect-overlay">
   <div class="mp-panel-raised mp-framed rounded-sm p-7 max-w-md text-center" style="border-color: var(--mp-oxblood);">
     <div class="mp-display italic text-[26px] mb-2" style="color: #E79E9B;">Connection lost.</div>
@@ -422,49 +432,41 @@
   // It runs once here; the duplicate `if (gameOver) startPostMatchPanel()` below
   // is intentionally removed to avoid resetting green steps back to gray.
   if (gameOver) {
-    if (WATCH_MODE && ANALYSIS_STATUS === 'completed') {
-      // Restore full pipeline state from server-provided DB snapshot.
-      startPostMatchPanel();
+    startPostMatchPanel();
+    if (ANALYSIS_STATUS === 'completed') {
       renderPostMatchSteps(ANALYSIS_STEPS_COMPLETED, null);
-      const headline = document.getElementById('postmatch-headline');
-      if (headline) headline.textContent = 'Match complete.';
-      const panel = document.getElementById('postmatch-panel');
-      if (panel && AGENT_ID) {
-        const link = document.createElement('a');
-        link.href = `/matches/${MATCH_ID}/summary`;
-        link.className = 'block mt-2 text-xs text-[var(--mp-brass-dim)] hover:text-[var(--mp-brass-bright)] transition';
-        link.textContent = 'View match summary →';
-        panel.appendChild(link);
-      }
-    } else {
-      // Human match or analysis not yet complete — open panel with gray placeholders.
-      startPostMatchPanel();
+      const hl = document.getElementById('postmatch-headline');
+      if (hl) hl.textContent = 'Match complete.';
+      const summaryEl = document.getElementById('summary-inline');
+      if (summaryEl) summaryEl.classList.remove('hidden');
     }
   }
 
+  function buildMoveRow(m) {
+    const li = document.createElement('li');
+    li.className = 'py-0.5';
+    const numNode = document.createTextNode(`${m.move_number}. `);
+    const sideSpan = document.createElement('span');
+    sideSpan.textContent = m.side === 'white' ? 'W' : 'B';
+    sideSpan.style.color = m.side === 'white' ? '#EDE4CE' : '#6B8A82';
+    sideSpan.style.fontWeight = '600';
+    const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms${m.engine_name ? ', ' + m.engine_name : ''})` : '';
+    const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined) ? ` [${(m.eval_cp/100).toFixed(1)}]` : '';
+    const restNode = document.createTextNode(` ${m.san}${evalStr}${timing}`);
+    li.appendChild(numNode);
+    li.appendChild(sideSpan);
+    li.appendChild(restNode);
+    return li;
+  }
   function renderMoves(moves) {
     const ol = document.getElementById('move-list');
     ol.innerHTML = '';
-    for (const m of moves) {
-      const li = document.createElement('li');
-      li.className = 'py-0.5';
-      const side = m.side === 'white' ? 'W' : 'B';
-      const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms, ${m.engine_name || ''})` : '';
-      const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined) ? ` [${(m.eval_cp/100).toFixed(1)}]` : '';
-      li.textContent = `${m.move_number}. ${side} ${m.san}${evalStr}${timing}`;
-      ol.appendChild(li);
-    }
+    for (const m of moves) ol.appendChild(buildMoveRow(m));
     ol.scrollTop = ol.scrollHeight;
   }
   function appendMoveRow(m) {
     const ol = document.getElementById('move-list');
-    const li = document.createElement('li');
-    li.className = 'py-0.5';
-    const side = m.side === 'white' ? 'W' : 'B';
-    const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms, ${m.engine_name || ''})` : '';
-    const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined) ? ` [${(m.eval_cp/100).toFixed(1)}]` : '';
-    li.textContent = `${m.move_number}. ${side} ${m.san}${evalStr}${timing}`;
-    ol.appendChild(li);
+    ol.appendChild(buildMoveRow(m));
     ol.scrollTop = ol.scrollHeight;
   }
 
@@ -752,29 +754,32 @@
   });
 
   socket.on('post_match_complete', (payload) => {
-    if (WATCH_MODE) {
-      let headline = 'Match complete.';
-      if (payload.agent_elo_delta !== null && payload.agent_elo_delta !== undefined) {
-        const sign = payload.agent_elo_delta >= 0 ? '+' : '';
-        headline += ` ${AGENT_NAME || 'Agent'} Elo: ${sign}${payload.agent_elo_delta} → ${payload.agent_elo_new}`;
-      }
-      document.getElementById('postmatch-headline').textContent = headline;
-      if (AGENT_ID) {
-        const panel = document.getElementById('postmatch-panel');
-        const summaryLink = document.createElement('a');
-        summaryLink.href = `/matches/${MATCH_ID}/summary`;
-        summaryLink.className = 'block mt-2 text-xs text-[var(--mp-brass-dim)] hover:text-[var(--mp-brass-bright)] transition';
-        summaryLink.textContent = 'View match summary →';
-        panel.appendChild(summaryLink);
-        const agentLink = document.createElement('a');
-        agentLink.href = `/agents/${AGENT_ID}`;
-        agentLink.className = 'block mt-1 text-xs text-[var(--mp-ink-faint)] hover:text-[var(--mp-ink-muted)] transition';
-        agentLink.textContent = `View ${AGENT_NAME || 'agent'} detail →`;
-        panel.appendChild(agentLink);
-      }
+    let headline = 'Match complete.';
+    if (WATCH_MODE && payload.agent_elo_delta !== null && payload.agent_elo_delta !== undefined) {
+      const sign = payload.agent_elo_delta >= 0 ? '+' : '';
+      headline += ` ${AGENT_NAME || 'Agent'} Elo: ${sign}${payload.agent_elo_delta} → ${payload.agent_elo_new}`;
+    }
+    const hl = document.getElementById('postmatch-headline');
+    if (hl) hl.textContent = headline;
+
+    const summaryEl = document.getElementById('summary-inline');
+    if (!summaryEl) return;
+    if (!document.getElementById('summary-loading')) {
+      // Already server-rendered (page loaded after analysis was complete).
+      summaryEl.classList.remove('hidden');
+      setTimeout(() => summaryEl.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
     } else {
-      document.getElementById('postmatch-headline').textContent = 'Done. Redirecting to the summary…';
-      setTimeout(() => { window.location.href = payload.summary_url; }, 1200);
+      fetch(`/matches/${MATCH_ID}/summary?fragment=1`)
+        .then(r => r.text())
+        .then(html => {
+          summaryEl.innerHTML = html;
+          summaryEl.classList.remove('hidden');
+          setTimeout(() => summaryEl.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
+        })
+        .catch(() => {
+          summaryEl.innerHTML = '<p class="p-4 text-[var(--mp-ink-muted)]">Summary unavailable — <a href="/matches/' + MATCH_ID + '/summary" class="underline">open in full page</a>.</p>';
+          summaryEl.classList.remove('hidden');
+        });
     }
   });
 
