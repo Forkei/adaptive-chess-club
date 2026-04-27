@@ -141,29 +141,31 @@
     pieceTheme: (piece) => `/static/img/chesspieces/wikipedia/${piece}.png`,
   });
 
+  function buildMoveRow(m) {
+    const li = document.createElement('li');
+    li.className = 'py-0.5';
+    const numNode = document.createTextNode(`${m.move_number}. `);
+    const sideSpan = document.createElement('span');
+    sideSpan.textContent = m.side === 'white' ? 'W' : 'B';
+    sideSpan.style.color = m.side === 'white' ? '#EDE4CE' : '#6B8A82';
+    sideSpan.style.fontWeight = '600';
+    const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms)` : '';
+    const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined) ? ` [${(m.eval_cp/100).toFixed(1)}]` : '';
+    const restNode = document.createTextNode(` ${m.san}${evalStr}${timing}`);
+    li.appendChild(numNode);
+    li.appendChild(sideSpan);
+    li.appendChild(restNode);
+    return li;
+  }
   function renderMoves(moves) {
     const ol = document.getElementById('move-list');
     ol.innerHTML = '';
-    for (const m of moves) {
-      const li = document.createElement('li');
-      li.className = 'py-0.5';
-      const side = m.side === 'white' ? 'W' : 'B';
-      const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms)` : '';
-      const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined) ? ` [${(m.eval_cp/100).toFixed(1)}]` : '';
-      li.textContent = `${m.move_number}. ${side} ${m.san}${evalStr}${timing}`;
-      ol.appendChild(li);
-    }
+    for (const m of moves) ol.appendChild(buildMoveRow(m));
     ol.scrollTop = ol.scrollHeight;
   }
   function appendMoveRow(m) {
     const ol = document.getElementById('move-list');
-    const li = document.createElement('li');
-    li.className = 'py-0.5';
-    const side = m.side === 'white' ? 'W' : 'B';
-    const timing = m.time_taken_ms ? ` (${m.time_taken_ms}ms)` : '';
-    const evalStr = (m.eval_cp !== null && m.eval_cp !== undefined) ? ` [${(m.eval_cp/100).toFixed(1)}]` : '';
-    li.textContent = `${m.move_number}. ${side} ${m.san}${evalStr}${timing}`;
-    ol.appendChild(li);
+    ol.appendChild(buildMoveRow(m));
     ol.scrollTop = ol.scrollHeight;
   }
   function addChatBubble(who, text, who_label) {
