@@ -406,18 +406,27 @@
   // Restore post-match panel on page refresh: if the match is already finished
   // and the pipeline completed, show the panel with all steps green immediately
   // instead of waiting for socket events that will never arrive.
-  if (WATCH_MODE && INITIAL_STATUS !== 'in_progress' && ANALYSIS_STATUS === 'completed') {
-    startPostMatchPanel();
-    renderPostMatchSteps(ANALYSIS_STEPS_COMPLETED, null);
-    const headline = document.getElementById('postmatch-headline');
-    if (headline) headline.textContent = 'Match complete.';
-    const panel = document.getElementById('postmatch-panel');
-    if (panel && AGENT_ID) {
-      const link = document.createElement('a');
-      link.href = `/matches/${MATCH_ID}/summary`;
-      link.className = 'block mt-2 text-xs text-[var(--mp-brass-dim)] hover:text-[var(--mp-brass-bright)] transition';
-      link.textContent = 'View match summary →';
-      panel.appendChild(link);
+  // This block is the canonical "open post-match panel on page load" path.
+  // It runs once here; the duplicate `if (gameOver) startPostMatchPanel()` below
+  // is intentionally removed to avoid resetting green steps back to gray.
+  if (gameOver) {
+    if (WATCH_MODE && ANALYSIS_STATUS === 'completed') {
+      // Restore full pipeline state from server-provided DB snapshot.
+      startPostMatchPanel();
+      renderPostMatchSteps(ANALYSIS_STEPS_COMPLETED, null);
+      const headline = document.getElementById('postmatch-headline');
+      if (headline) headline.textContent = 'Match complete.';
+      const panel = document.getElementById('postmatch-panel');
+      if (panel && AGENT_ID) {
+        const link = document.createElement('a');
+        link.href = `/matches/${MATCH_ID}/summary`;
+        link.className = 'block mt-2 text-xs text-[var(--mp-brass-dim)] hover:text-[var(--mp-brass-bright)] transition';
+        link.textContent = 'View match summary →';
+        panel.appendChild(link);
+      }
+    } else {
+      // Human match or analysis not yet complete — open panel with gray placeholders.
+      startPostMatchPanel();
     }
   }
 
@@ -943,8 +952,6 @@
 
   const lastAgentMove = [...INITIAL_MOVES].reverse().find(m => m.side !== PLAYER_COLOR);
   if (lastAgentMove && lastAgentMove.mood_snapshot) setEmotion("neutral", 0.2);
-
-  if (gameOver) startPostMatchPanel();
 
   if (!HAS_REAL_ENGINE && !WATCH_MODE) {
     showBanner('warn',
