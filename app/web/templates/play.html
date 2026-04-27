@@ -403,6 +403,18 @@
   // doesn't have network latency tacked on.
   if (window.MpSfx) MpSfx.preload(['chess_move', 'chess_capture', 'chess_check', 'bell', 'chime']);
 
+  // Must be declared before the if(gameOver) block below — const/let are not hoisted.
+  const STEP_LABELS = {
+    engine_analysis:     "Analyzing every move",
+    feature_extraction:  "Extracting your style",
+    elo_ratchet:         "Adjusting Elo",
+    memory_generation:   "Forming memories",
+    narrative_summary:   "Writing a note about you",
+  };
+  const ALL_STEPS = [
+    "engine_analysis", "feature_extraction", "elo_ratchet", "memory_generation", "narrative_summary",
+  ];
+
   // Restore post-match panel on page refresh: if the match is already finished
   // and the pipeline completed, show the panel with all steps green immediately
   // instead of waiting for socket events that will never arrive.
@@ -866,16 +878,6 @@
     resultEl.textContent = `${result || 'unknown'}${tail}${reason ? ` · ${reason}` : ''}`;
   }
 
-  const STEP_LABELS = {
-    engine_analysis:     "Analyzing every move",
-    feature_extraction:  "Extracting your style",
-    elo_ratchet:         "Adjusting Elo",
-    memory_generation:   "Forming memories",
-    narrative_summary:   "Writing a note about you",
-  };
-  const ALL_STEPS = [
-    "engine_analysis", "feature_extraction", "elo_ratchet", "memory_generation", "narrative_summary",
-  ];
 
   function renderPostMatchSteps(completed, currentStep) {
     const ul = document.getElementById('postmatch-steps');

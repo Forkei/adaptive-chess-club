@@ -1291,12 +1291,17 @@ def match_page(
     # Post-match analysis state — lets the watch page restore the step indicators
     # after a page refresh (they would otherwise stay gray because the socket
     # events that drove them are long gone).
-    from app.models.match import MatchAnalysis
-    _analysis = session.execute(
-        select(MatchAnalysis).where(MatchAnalysis.match_id == match_id)
-    ).scalar_one_or_none()
-    analysis_status = _analysis.status.value if _analysis else None
-    analysis_steps_completed = list(_analysis.steps_completed or []) if _analysis else []
+    try:
+        from app.models.match import MatchAnalysis
+        _analysis = session.execute(
+            select(MatchAnalysis).where(MatchAnalysis.match_id == match_id)
+        ).scalar_one_or_none()
+        analysis_status = _analysis.status.value if _analysis else None
+        analysis_steps_completed = list(_analysis.steps_completed or []) if _analysis else []
+    except Exception:
+        logger.exception("match_page: failed to load analysis for match=%s", match_id)
+        analysis_status = None
+        analysis_steps_completed = []
 
     return templates.TemplateResponse(
         request,
